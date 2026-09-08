@@ -276,6 +276,13 @@ impl Store {
     }
 
     /// Every resolved annotation, in source order.
+    /// Whether any annotation currently resolves into the document.
+    ///
+    /// Cheaper than `placed()`, which allocates and sorts; the layout asks this every frame.
+    pub(crate) fn has_placed(&self) -> bool {
+        self.resolved.iter().any(|r| matches!(r, Resolution::Range(_)))
+    }
+
     pub(crate) fn placed(&self) -> Vec<Placed<'_>> {
         let mut out: Vec<Placed<'_>> = self
             .annotations

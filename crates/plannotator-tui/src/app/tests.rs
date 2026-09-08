@@ -14,7 +14,7 @@ use ratatui::crossterm::event::{
 };
 
 use super::send::SendState;
-use super::{App, Mode};
+use super::{App, GUTTER, Mode};
 use crate::delivery::{Delivery, Discard, HerdrAgent};
 use crate::render::RenderSettings;
 
@@ -405,4 +405,19 @@ fn pasting_into_the_comment_box_keeps_newlines() {
     app.handle_event(&key(KeyCode::Enter, KeyModifiers::NONE)).expect("save");
     let placed = app.open.store.placed();
     assert_eq!(placed.last().expect("annotation").annotation.body, "pasted one\npasted two");
+}
+
+#[test]
+fn the_rail_costs_no_width_until_an_annotation_exists() {
+    let mut app = app(Box::new(Discard));
+    // 110 columns: wide enough for the rail to be eligible, too narrow for the tree.
+    draw_sized(&mut app, 110, 20);
+    let unmarked = app.open.layout.width;
+    assert_eq!(unmarked, 110 - usize::from(GUTTER), "an unmarked document uses the whole pane");
+
+    app.add_block_annotation(0, Kind::Comment, "note".to_owned()).expect("annotates");
+    draw_sized(&mut app, 110, 20);
+    let marked = app.open.layout.width;
+    assert!(marked < unmarked, "the rail appears with the first annotation: {marked} < {unmarked}");
+    assert!(marked >= 20, "the document keeps its minimum width");
 }

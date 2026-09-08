@@ -39,11 +39,15 @@ impl App {
 
         let show_tree = self.tree_shown(area.width) || (self.tree.is_some() && self.focus == Focus::Tree);
         let tree_width = if show_tree { TREE_WIDTH } else { 0 };
-        let rail_width = if area.width.saturating_sub(tree_width) >= RAIL_MIN_TOTAL_WIDTH {
-            (area.width * 3 / 10).clamp(RAIL_MIN_WIDTH, RAIL_WIDTH)
-        } else {
-            0
-        };
+        // The rail only holds bubbles for annotations that exist. Reserving it while there are
+        // none costs about a third of the width and shows nothing - which is most of the time a
+        // document is being read rather than marked up. The toolbar and the compose box float
+        // over the document, so they do not need this space either. Adding the first annotation
+        // reflows the document once, which is also how the rail announces itself.
+        let rail_wanted =
+            self.open.store.has_placed() && area.width.saturating_sub(tree_width) >= RAIL_MIN_TOTAL_WIDTH;
+        let rail_width =
+            if rail_wanted { (area.width * 3 / 10).clamp(RAIL_MIN_WIDTH, RAIL_WIDTH) } else { 0 };
         let [tree, gutter, doc, _gap, rail] = Layout::horizontal([
             Constraint::Length(tree_width),
             Constraint::Length(GUTTER),
