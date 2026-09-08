@@ -58,6 +58,12 @@ pub(crate) struct RenderedBlock {
     range: Range<usize>,
     /// Set when this block rendered as a picture instead of text.
     art: Option<ArtSource>,
+    /// Widest rendered line, which is what decides whether the block fits.
+    intrinsic_width: usize,
+    /// A table's own Markdown, for when the rendered table is wider than the pane.
+    source_view: Option<(Text<'static>, Vec<LineOffsets>)>,
+    /// Set during reflow when `source_view` is what the current width shows.
+    showing_source: bool,
     /// Rows for the current width.
     pub(crate) rows: Vec<Row>,
     /// First screen row of this block in document coordinates.
@@ -65,10 +71,43 @@ pub(crate) struct RenderedBlock {
 }
 
 impl RenderedBlock {
-    /// Art and code keep their columns; prose word-wraps.
+    /// Art and code keep their columns; prose word-wraps. A table shown as its own Markdown
+    /// wraps, because that is the point of falling back to it.
     fn preserves_columns(&self) -> bool {
-        self.art.is_some() || self.kind.preserves_columns()
+        !self.showing_source && (self.art.is_some() || self.kind.preserves_columns())
     }
+
+    /// The text and offsets the current width shows.
+    fn shown(&self) -> (&Text<'static>, &Vec<LineOffsets>) {
+        match (&self.source_view, self.showing_source) {
+            (Some((text, offsets)), true) => (text, offsets),
+            _ => (&self.text, &self.offsets),
+        }
+    }
+}
+
+/// Text and offsets for a block's own Markdown, where every character maps to its source byte.
+///
+/// A wide table falls back to this. `tui-markdown` sizes a table's columns from its content with
+/// no notion of the space available, so a table wider than the pane was clipped: the right border
+/// and the tail of every row were dropped, silently, and no clipped cell could be selected. The
+/// source keeps every character and, being the source, maps to it exactly.
+fn source_view(doc: &Document, index: usize) -> (Text<'static>, Vec<LineOffsets>) {
+    let source = doc.block_text(index);
+    let base = doc.blocks.get(index).map_or(0, |b| b.range.start);
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut offsets: Vec<LineOffsets> = Vec::new();
+    let mut at = base;
+    for line in source.split('\n') {
+        offsets.push(line.char_indices().map(|(i, _)| Some(at + i)).collect());
+        lines.push(Line::from(line.to_owned()));
+        at += line.len() + 1; // the newline the split consumed
+    }
+    (Text::from(lines), offsets)
+}
+
+fn widest(text: &Text<'_>) -> usize {
+    text.lines.iter().map(Line::width).max().unwrap_or(0)
 }
 
 #[derive(Debug)]
@@ -126,12 +165,19 @@ impl DocLayout {
                     let (text, offsets) = render_block(doc, i, ctx.theme);
                     (text, offsets, None)
                 };
+                let intrinsic_width = widest(&text);
+                // Only a table can outgrow its pane in a way that loses content; code blocks are
+                // expected to be clipped and art has no smaller form.
+                let source_view = (block.kind == BlockKind::Table).then(|| source_view(doc, i));
                 RenderedBlock {
                     text,
                     offsets,
                     kind: block.kind,
                     range: block.range.clone(),
                     art,
+                    intrinsic_width,
+                    source_view,
+                    showing_source: false,
                     rows: Vec::new(),
                     first_row: 0,
                 }
@@ -157,12 +203,16 @@ impl DocLayout {
                 block.text = art.to_text(width);
                 block.offsets = art_offsets(&block.text);
             }
-            let lines = block.text.lines.iter().zip(&block.offsets);
-            block.rows = if block.preserves_columns() {
+            block.showing_source = block.source_view.is_some() && block.intrinsic_width > width;
+            let preserve = block.preserves_columns();
+            let (text, offsets) = block.shown();
+            let lines = text.lines.iter().zip(offsets);
+            let rows: Vec<Row> = if preserve {
                 lines.map(|(l, o)| clip_line(l, o, width)).collect()
             } else {
                 lines.flat_map(|(l, o)| wrap_line(l, o, width)).collect()
             };
+            block.rows = rows;
             row += block.rows.len() + BLOCK_GAP;
         }
         self.total_rows = row.saturating_sub(BLOCK_GAP);
@@ -216,7 +266,8 @@ impl DocLayout {
             }
             let break_char = if block.kind.preserves_columns() { '\n' } else { ' ' };
             let mut last_offset: Option<usize> = None;
-            let chars = block.text.lines.iter().zip(&block.offsets).flat_map(|(line, offsets)| {
+            let (text, offsets) = block.shown();
+            let chars = text.lines.iter().zip(offsets).flat_map(|(line, offsets)| {
                 line.spans.iter().flat_map(|s| s.content.chars()).zip(offsets.iter())
             });
             for (ch, offset) in chars {
@@ -295,6 +346,30 @@ mod tests {
         let (doc, layout) = image_layout(&dir, 80);
         // Commenting on the block must store a quote the anchor can resolve in the source.
         assert_eq!(layout.rendered_in_range(&doc.source, &(0..doc.source.len())), "![logo](logo.png)");
+    }
+
+    #[test]
+    fn a_table_too_wide_for_the_pane_falls_back_to_its_own_markdown() {
+        let source = "| Key | Meaning |\n|:---|:---|\n| a | a long cell that will not fit anywhere |\n";
+        let doc = Document::parse(source.to_owned());
+        let mut layout = DocLayout::build(&doc, 200, &RenderContext::text_only());
+
+        let block = layout.blocks.first().expect("one block");
+        assert!(!block.showing_source, "it fits at 200 columns");
+        assert!(
+            block.rows.iter().any(|r| r.line.to_string().contains('\u{250c}')),
+            "and renders as a drawn table"
+        );
+
+        layout.reflow(30);
+        let block = layout.blocks.first().expect("one block");
+        assert!(block.showing_source, "it cannot fit at 30 columns");
+        let shown: Vec<String> = block.rows.iter().map(|r| r.line.to_string()).collect();
+        // What used to be clipped away is still on screen, and still maps to the source, so it
+        // can be selected and quoted.
+        assert!(shown.iter().any(|l| l.contains("anywhere")), "the tail survives: {shown:?}");
+        assert!(block.rows.iter().any(|r| r.cells.iter().any(Option::is_some)), "and is selectable");
+        assert!(shown.iter().all(|l| l.chars().count() <= 30), "and fits: {shown:?}");
     }
 
     #[test]
