@@ -18,6 +18,13 @@ herdr/                    the Herdr plugin manifest. The launcher it runs is
 Markdown parsing is `pulldown-cmark`; rendering to styled text is `tui-markdown`. We never
 interpret markdown ourselves. Anything that needs to know "what is a heading" is a bug.
 
+`src/art/` is the exception to "one seam per external system" being in-process: a Mermaid fence
+is laid out by `grok-mermaid` under Node, spawned once per document with an embedded bridge
+script. It must never be able to fail a document — no Node, no package, a rejected diagram and
+a hang all fall back to the plain code block. Detection still goes through `pulldown-cmark`
+(the fence's info string, the image destination), never string matching on markup. See
+`docs/decisions.md` 15 and 16.
+
 ## Rules that are enforced (see `Cargo.toml` workspace lints)
 
 - `unsafe` is forbidden. `unwrap`/`expect`/`panic!`/`todo!` warn — production code returns

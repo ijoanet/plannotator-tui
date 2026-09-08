@@ -2,6 +2,7 @@
 
 mod app;
 mod archive;
+mod art;
 mod base64;
 mod cli;
 mod config;

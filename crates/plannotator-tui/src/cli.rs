@@ -17,6 +17,7 @@ use ratatui::crossterm::event::{
 use ratatui::crossterm::execute;
 
 use crate::app::App;
+use crate::art::ArtContext;
 use crate::config::Config;
 use crate::delivery::{Clipboard, Delivery, Discard, HerdrAgent};
 use crate::doc::Document;
@@ -68,11 +69,17 @@ pub(crate) fn delivery(interactive: bool) -> Box<dyn Delivery> {
 
 fn open_app(path: &PathBuf, width: usize, interactive: bool) -> Result<App> {
     let delivery = delivery(interactive);
+    let art = art_config()?;
     if path.is_dir() {
-        App::open_folder(path, width, delivery)
+        App::open_folder(path, width, delivery, art)
     } else {
-        App::open(open_file(path)?, width, delivery)
+        App::open(open_file(path)?, width, delivery, art)
     }
+}
+
+/// The art settings from the user's config file, for every entry point that opens a document.
+pub(crate) fn art_config() -> Result<crate::config::ArtConfig> {
+    Ok(Config::load()?.art())
 }
 
 fn parse_kind(s: Option<&str>) -> Kind {
@@ -304,7 +311,7 @@ fn bench(path: &PathBuf) -> Result<()> {
     let parse_ms = t.elapsed().as_secs_f64() * 1000.0;
 
     let t = Instant::now();
-    let mut layout = DocLayout::build(&doc, 100);
+    let mut layout = DocLayout::build(&doc, 100, &ArtContext::for_document(Some(path), art_config()?));
     let build_ms = t.elapsed().as_secs_f64() * 1000.0;
 
     let reflow: Vec<String> = [60usize, 140, 80, 120]

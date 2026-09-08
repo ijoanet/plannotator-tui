@@ -51,10 +51,17 @@ plannotator-tui --snapshot <file|folder> [cols rows scroll] [select-quote]   # o
 |---|---|---|---|---|---|
 | plugins.md (16 KB) | 60 | 305 | 14 ms | 0.7 ms | 20 ns |
 | big.md (2.5 MB, 50k lines) | 14,100 | 56,999 | 352 ms | 50 ms | 15 ns |
+| 20 Mermaid diagrams | 41 | 181 | 79 ms | 0.1 ms | — |
 
-Per frame, only visible rows are touched.
+Per frame, only visible rows are touched. The diagram figure is one Node process for the whole
+document; it was 1375 ms when each fence spawned its own. A machine with no Node spawns once
+per run, not once per fence (22 ms for the same file).
 
 ## Known limits
 
 - Reference-style links and footnotes lose their target when a block is rendered alone.
 - A whole list is one block for block-level commands; text selection is not affected.
+- Art (a Mermaid diagram, an image) has no per-character source map, so a text selection
+  cannot start inside one; comment on the block instead. Art clips rather than wraps when the
+  terminal is narrower than the picture.
+- Images render as half-blocks and need truecolor; remote images are never fetched.

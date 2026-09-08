@@ -30,9 +30,10 @@ impl App {
         messages: Vec<Message>,
         width: usize,
         delivery: Box<dyn crate::delivery::Delivery>,
+        art: crate::config::ArtConfig,
     ) -> Result<Self> {
         let Some(newest) = messages.first() else { anyhow::bail!("no message to open") };
-        let mut app = Self::open(message_source(host, session_id, newest), width, delivery)?;
+        let mut app = Self::open(message_source(host, session_id, newest), width, delivery, art)?;
         host.clone_into(&mut app.message_host);
         transcript.clone_into(&mut app.message_transcript);
         app.message_session = session_id.map(str::to_owned);
@@ -57,7 +58,7 @@ impl App {
         } else {
             let Some(message) = self.candidates.get(index) else { return Ok(()) };
             let source = message_source(&self.message_host, self.message_session.as_deref(), message);
-            Open::new(source, self.open.layout.width, &self.data_dir, &self.project)?
+            Open::new(source, self.open.layout.width, &self.data_dir, &self.project, &self.art)?
         };
         let leaving = std::mem::replace(&mut self.open, next);
         self.pick_cache.insert(self.pick_open, leaving);

@@ -50,7 +50,7 @@ pub(crate) fn run(options: &LastOptions) -> Result<()> {
             return Ok(());
         }
         let source = DocumentSource::new(text, "stdin · message", true, Provenance::Stdin);
-        return cli::run_ui(|width| App::open(source, width, cli::delivery(true)));
+        return cli::run_ui(|width| App::open(source, width, cli::delivery(true), cli::art_config()?));
     }
     let located = match locate::locate(options) {
         Ok(located) => located,
@@ -66,7 +66,7 @@ pub(crate) fn run(options: &LastOptions) -> Result<()> {
             };
             let note = format!("{err:#} — showing the pane's recent output instead");
             return cli::run_ui(|width| {
-                let mut app = App::open(screen, width, cli::delivery(true))?;
+                let mut app = App::open(screen, width, cli::delivery(true), cli::art_config()?)?;
                 app.set_status(note.clone());
                 Ok(app)
             });
@@ -91,6 +91,7 @@ pub(crate) fn run(options: &LastOptions) -> Result<()> {
             messages,
             width,
             cli::delivery(true),
+            cli::art_config()?,
         )?;
         if let Some(note) = note {
             app.set_status(note);

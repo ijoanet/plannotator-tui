@@ -61,6 +61,40 @@ review to the clipboard as numbered annotations (`# Annotations on plan.md`, `##
 | notes | `j`/`k`; `e` edit; `x` remove; click a bubble |
 | tree | `j`/`k`; `Enter` open; `E` sends every annotated file |
 
+## Diagrams and images
+
+A ```` ```mermaid ```` fence renders as Unicode box-drawing art, and a paragraph that is just
+`![alt](path.png)` renders as the picture, in half-blocks. Both are annotated like any other
+block: `j`/`k` to the block and `c` to comment on it. You cannot select *inside* a picture —
+box-drawing is not your text — and a comment on one quotes the Mermaid source or the
+`![alt](…)` line, so the feedback your agent gets names what you meant.
+
+Diagrams need [`grok-mermaid`](https://github.com/xl0/grok-mermaid) and Node on the machine;
+point `base_dir` at a directory that has it installed:
+
+```sh
+mkdir -p ~/.local/share/grok-mermaid && cd ~/.local/share/grok-mermaid && npm install grok-mermaid
+```
+
+```toml
+# ~/.config/plannotator-tui/config.toml
+[mermaid]
+enabled = true
+base_dir = "~/.local/share/grok-mermaid"   # holds node_modules/grok-mermaid; empty = cwd
+node = ""                                  # empty = `node` on PATH
+timeout_ms = 5000                          # budget for the whole document
+
+[image]
+enabled = true
+max_rows = 20      # tallest a picture may render
+```
+
+`PLANNOTATOR_MERMAID_BASE` and `PLANNOTATOR_MERMAID_NODE` override the first two. Without
+Node or `grok-mermaid` a fence stays an ordinary code block, and an image that cannot be read
+stays `[img] alt` — neither is an error. Images are read from disk only: a remote `https://`
+image is never fetched. Local `png`, `jpeg`, `gif` and `webp` are supported; pictures need a
+truecolor terminal.
+
 ## Inside Herdr
 
 Install [Herdr Annotate](https://github.com/plannotator/herdr-annotate); it bundles this binary,

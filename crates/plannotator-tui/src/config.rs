@@ -15,6 +15,103 @@ use serde::{Deserialize, Serialize};
 #[serde(deny_unknown_fields, default)]
 pub(crate) struct Config {
     pub(crate) herdr: HerdrConfig,
+    pub(crate) mermaid: MermaidConfig,
+    pub(crate) image: ImageConfig,
+}
+
+impl Config {
+    /// The art renderers' settings, as the layout wants them.
+    pub(crate) fn art(&self) -> ArtConfig {
+        ArtConfig { mermaid: self.mermaid.clone(), image: self.image.clone() }
+    }
+}
+
+/// Rendering of blocks that become pictures instead of text.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct ArtConfig {
+    pub(crate) mermaid: MermaidConfig,
+    pub(crate) image: ImageConfig,
+}
+
+impl ArtConfig {
+    /// Both renderers off, for callers that must render text only.
+    #[cfg(test)]
+    pub(crate) fn disabled() -> Self {
+        Self {
+            mermaid: MermaidConfig { enabled: false, ..MermaidConfig::default() },
+            image: ImageConfig { enabled: false, ..ImageConfig::default() },
+        }
+    }
+}
+
+/// Mermaid fences rendered as Unicode art by `grok-mermaid` under Node.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub(crate) struct MermaidConfig {
+    pub(crate) enabled: bool,
+    /// Directory holding `node_modules/grok-mermaid`; empty means the working directory.
+    pub(crate) base_dir: String,
+    /// Node binary; empty means `node` on `PATH`.
+    pub(crate) node: String,
+    /// Give up on a diagram after this long.
+    pub(crate) timeout_ms: u64,
+}
+
+impl Default for MermaidConfig {
+    fn default() -> Self {
+        Self { enabled: true, base_dir: String::new(), node: String::new(), timeout_ms: 5_000 }
+    }
+}
+
+impl MermaidConfig {
+    /// `PLANNOTATOR_MERMAID_NODE`, else the configured binary, else `node` on `PATH`.
+    pub(crate) fn resolved_node(&self) -> String {
+        env_override("PLANNOTATOR_MERMAID_NODE")
+            .or_else(|| Some(self.node.clone()).filter(|s| !s.is_empty()))
+            .unwrap_or_else(|| "node".to_owned())
+    }
+
+    /// `PLANNOTATOR_MERMAID_BASE`, else the configured directory, else the working directory.
+    pub(crate) fn resolved_base_dir(&self) -> Result<PathBuf> {
+        let home = || std::env::home_dir().unwrap_or_else(|| PathBuf::from("/"));
+        if let Some(dir) = env_override("PLANNOTATOR_MERMAID_BASE") {
+            return Ok(expand_home(&dir, &home()));
+        }
+        if !self.base_dir.is_empty() {
+            return Ok(expand_home(&self.base_dir, &home()));
+        }
+        std::env::current_dir().context("locating the working directory for the mermaid renderer")
+    }
+}
+
+/// Expand a leading `~`, the way `PLANNOTATOR_DATA_DIR` is expanded: a config file is written
+/// by hand, so a home-relative path has to work there.
+fn expand_home(dir: &str, home: &Path) -> PathBuf {
+    let dir = dir.trim();
+    match dir.strip_prefix("~/").or_else(|| dir.strip_prefix("~\\")) {
+        Some(rest) => home.join(rest),
+        None if dir == "~" => home.to_path_buf(),
+        None => PathBuf::from(dir),
+    }
+}
+
+/// Images rendered as Unicode half-blocks.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub(crate) struct ImageConfig {
+    pub(crate) enabled: bool,
+    /// Tallest an image may render, in terminal rows.
+    pub(crate) max_rows: usize,
+}
+
+impl Default for ImageConfig {
+    fn default() -> Self {
+        Self { enabled: true, max_rows: 20 }
+    }
+}
+
+fn env_override(key: &str) -> Option<String> {
+    std::env::var(key).ok().filter(|value| !value.is_empty())
 }
 
 /// How plannotator-tui opens inside Herdr.
@@ -217,5 +314,34 @@ mod tests {
     fn roundtrips_through_toml() {
         let text = Config::default().to_toml().expect("serializes");
         assert_eq!(Config::parse(&text).expect("parses"), Config::default());
+    }
+
+    #[test]
+    fn a_home_relative_renderer_directory_is_expanded() {
+        let home = Path::new("/home/u");
+        assert_eq!(expand_home("~/.local/share/gm", home), PathBuf::from("/home/u/.local/share/gm"));
+        assert_eq!(expand_home("~", home), PathBuf::from("/home/u"));
+        assert_eq!(expand_home("/abs/gm", home), PathBuf::from("/abs/gm"));
+        // Not a home reference: a directory that merely begins with a tilde.
+        assert_eq!(expand_home("~weird/gm", home), PathBuf::from("~weird/gm"));
+    }
+
+    #[test]
+    fn art_sections_default_on_and_accept_partial_overrides() {
+        let config = Config::parse("[image]\nmax_rows = 4\n").expect("parses");
+        assert!(config.image.enabled, "unset keys keep their default");
+        assert_eq!(config.image.max_rows, 4);
+        assert!(config.mermaid.enabled);
+        assert_eq!(config.art().image.max_rows, 4);
+
+        let off = Config::parse("[mermaid]\nenabled = false\n").expect("parses");
+        assert!(!off.mermaid.enabled);
+        assert!(off.image.enabled);
+    }
+
+    #[test]
+    fn an_unknown_art_key_names_the_key() {
+        let err = Config::parse("[image]\nmax_row = 4\n").expect_err("rejected");
+        assert!(err.to_string().contains("max_row"), "{err}");
     }
 }

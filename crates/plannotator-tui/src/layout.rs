@@ -10,6 +10,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Text};
 use tui_markdown::{Options, StyleSheet};
 
+use crate::art::{Art, ArtContext, ArtSource};
 use crate::doc::{BlockKind, Document};
 use crate::srcmap::{LineOffsets, align};
 use crate::wrap::{Row, clip_line, wrap_line};
@@ -51,10 +52,21 @@ pub(crate) struct RenderedBlock {
     /// Per line, per char: absolute source byte offset (cached with `text`).
     offsets: Vec<LineOffsets>,
     kind: BlockKind,
+    /// The block's source bytes, so an art block can quote what its picture stands for.
+    range: Range<usize>,
+    /// Set when this block rendered as a picture instead of text.
+    art: Option<ArtSource>,
     /// Rows for the current width.
     pub(crate) rows: Vec<Row>,
     /// First screen row of this block in document coordinates.
     pub(crate) first_row: usize,
+}
+
+impl RenderedBlock {
+    /// Art and code keep their columns; prose word-wraps.
+    fn preserves_columns(&self) -> bool {
+        self.art.is_some() || self.kind.preserves_columns()
+    }
 }
 
 #[derive(Debug)]
@@ -62,6 +74,15 @@ pub(crate) struct DocLayout {
     pub(crate) width: usize,
     pub(crate) blocks: Vec<RenderedBlock>,
     pub(crate) total_rows: usize,
+}
+
+/// Offsets for art: one `None` per rendered character, since no character came from the
+/// source. `wrap`'s cell mapping needs an entry per char, present or not.
+fn art_offsets(text: &Text<'_>) -> Vec<LineOffsets> {
+    text.lines
+        .iter()
+        .map(|line| vec![None; line.spans.iter().map(|s| s.content.chars().count()).sum()])
+        .collect()
 }
 
 fn render_block(doc: &Document, index: usize) -> (Text<'static>, Vec<LineOffsets>) {
@@ -88,14 +109,30 @@ fn own(text: Text<'_>) -> Text<'static> {
 
 impl DocLayout {
     /// Render every block once (the expensive part) and lay out for `width`.
-    pub(crate) fn build(doc: &Document, width: usize) -> Self {
+    pub(crate) fn build(doc: &Document, width: usize, ctx: &ArtContext) -> Self {
+        let mut art = crate::art::render_all(doc, width, ctx);
         let blocks = doc
             .blocks
             .iter()
             .enumerate()
             .map(|(i, block)| {
-                let (text, offsets) = render_block(doc, i);
-                RenderedBlock { text, offsets, kind: block.kind, rows: Vec::new(), first_row: 0 }
+                // A block that renders as a picture skips the markdown renderer entirely.
+                let (text, offsets, art) = if let Some(Art { text, source }) = art.remove(&i) {
+                    let offsets = art_offsets(&text);
+                    (text, offsets, Some(source))
+                } else {
+                    let (text, offsets) = render_block(doc, i);
+                    (text, offsets, None)
+                };
+                RenderedBlock {
+                    text,
+                    offsets,
+                    kind: block.kind,
+                    range: block.range.clone(),
+                    art,
+                    rows: Vec::new(),
+                    first_row: 0,
+                }
             })
             .collect();
         let mut layout = Self { width: 0, blocks, total_rows: 0 };
@@ -104,14 +141,22 @@ impl DocLayout {
     }
 
     /// Re-wrap for a new width without re-rendering markdown.
+    ///
+    /// An image is re-sampled from its cached thumbnail, because unlike text and diagram art
+    /// its shape is chosen to fit the width.
     pub(crate) fn reflow(&mut self, width: usize) {
         let width = width.max(1);
+        let resample = width != self.width;
         self.width = width;
         let mut row = 0usize;
         for block in &mut self.blocks {
             block.first_row = row;
+            if resample && let Some(ArtSource::Image(art)) = &block.art {
+                block.text = art.to_text(width);
+                block.offsets = art_offsets(&block.text);
+            }
             let lines = block.text.lines.iter().zip(&block.offsets);
-            block.rows = if block.kind.preserves_columns() {
+            block.rows = if block.preserves_columns() {
                 lines.map(|(l, o)| clip_line(l, o, width)).collect()
             } else {
                 lines.flat_map(|(l, o)| wrap_line(l, o, width)).collect()
@@ -154,6 +199,19 @@ impl DocLayout {
     pub(crate) fn rendered_in_range(&self, source: &str, range: &Range<usize>) -> String {
         let mut out = String::new();
         for block in &self.blocks {
+            // Art has no per-character source map — a diagram's box-drawing is not the
+            // author's text — so it contributes the source it stands for. Without this,
+            // commenting on a diagram would store an empty quote for the anchor to resolve.
+            if block.art.is_some() {
+                let start = block.range.start.max(range.start);
+                let end = block.range.end.min(range.end);
+                if start < end
+                    && let Some(text) = source.get(start..end)
+                {
+                    out.push_str(text);
+                }
+                continue;
+            }
             let break_char = if block.kind.preserves_columns() { '\n' } else { ' ' };
             let mut last_offset: Option<usize> = None;
             let chars = block.text.lines.iter().zip(&block.offsets).flat_map(|(line, offsets)| {
@@ -179,16 +237,72 @@ impl DocLayout {
 #[cfg(test)]
 #[allow(clippy::expect_used, reason = "tests assert by panicking")]
 mod tests {
+    use std::path::{Path, PathBuf};
+
     use super::*;
+    use crate::config::ArtConfig;
 
     #[test]
     fn rendered_text_strips_markup_and_joins_blocks_without_separator() {
         let doc = Document::parse("Ship the **login page**\nby Friday.\n\nNext para.\n".to_owned());
-        let layout = DocLayout::build(&doc, 80);
+        let layout = DocLayout::build(&doc, 80, &ArtContext::disabled());
         let whole = 0..doc.source.len();
         assert_eq!(layout.rendered_in_range(&doc.source, &whole), "Ship the login page by Friday.Next para.");
         let bold = doc.source.find("**login").expect("present");
         let bold_range = bold..bold + "**login page**".len();
         assert_eq!(layout.rendered_in_range(&doc.source, &bold_range), "login page");
+    }
+
+    /// A scratch directory holding one opaque PNG of `size` × `size` pixels.
+    fn image_dir(name: &str, size: u32) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("plannotator-tui-layout-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        let mut image = image::RgbaImage::new(size, size);
+        for pixel in image.pixels_mut() {
+            *pixel = image::Rgba([10, 20, 30, 255]);
+        }
+        image.save(dir.join("logo.png")).expect("writes png");
+        dir
+    }
+
+    fn image_layout(dir: &Path, width: usize) -> (Document, DocLayout) {
+        let doc = Document::parse("![logo](logo.png)\n".to_owned());
+        let ctx = ArtContext { base_dir: dir.to_path_buf(), config: ArtConfig::default() };
+        let layout = DocLayout::build(&doc, width, &ctx);
+        (doc, layout)
+    }
+
+    #[test]
+    fn an_image_paragraph_becomes_art_whose_cells_map_to_no_source_byte() {
+        let dir = image_dir("art-cells", 40);
+        let (_, layout) = image_layout(&dir, 80);
+        let block = layout.blocks.first().expect("one block");
+        assert!(block.art.is_some(), "the image paragraph rendered as art");
+        assert!(
+            block.rows.iter().all(|row| row.cells.iter().all(Option::is_none)),
+            "art stands for the block; no cell is a source byte"
+        );
+        assert!(block.rows.iter().all(|row| row.line.to_string().chars().count() <= 80));
+    }
+
+    #[test]
+    fn art_quotes_the_source_it_stands_for_rather_than_nothing() {
+        let dir = image_dir("art-quote", 40);
+        let (doc, layout) = image_layout(&dir, 80);
+        // Commenting on the block must store a quote the anchor can resolve in the source.
+        assert_eq!(layout.rendered_in_range(&doc.source, &(0..doc.source.len())), "![logo](logo.png)");
+    }
+
+    #[test]
+    fn a_narrower_width_re_samples_the_image_instead_of_clipping_it() {
+        let dir = image_dir("art-reflow", 40);
+        let (_, mut layout) = image_layout(&dir, 80);
+        // 40 square pixels at two per row: 40 columns, 20 rows.
+        assert_eq!(layout.blocks.first().map(|b| b.rows.len()), Some(20));
+        layout.reflow(20);
+        let block = layout.blocks.first().expect("one block");
+        assert_eq!(block.rows.len(), 10, "half the columns is half the rows, aspect ratio kept");
+        assert!(block.rows.iter().all(|row| row.line.to_string().chars().count() <= 20));
     }
 }

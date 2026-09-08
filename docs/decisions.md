@@ -363,3 +363,50 @@ looked up in whichever table holds it. Verified against the `beta` source
 (`packages/core/src/session/sql.ts`, `packages/schema/src/session-message.ts`,
 `packages/util/src/global-roots.ts`) and a mixed-schema fixture reproducing the report.
 
+
+## 15. Diagrams and images are art blocks, not a graphics protocol (2026-09-08)
+
+A Mermaid fence and an image-only paragraph render as a picture. Two choices shaped it.
+
+**Cells, not pixels.** Images render as Unicode half-blocks (`▀`, foreground = upper pixel,
+background = lower) rather than kitty/sixel graphics. The app is a grid of styled cells:
+everything downstream — scrolling, clipping, the selection's row map, `--snapshot`, a
+`TestBackend` assertion — operates on cells. A real raster image would need out-of-band
+escapes placed at absolute positions, which the buffer diff knows nothing about and which
+scroll wrong the moment the document moves. Half-blocks also need no terminal capability
+negotiation and degrade to the same picture everywhere truecolor works. With two pixels per
+cell each sub-pixel is square, so fitting the picture to `cols × 2·rows` keeps aspect ratio
+with no correction factor.
+
+**Art stands for its block.** A rendered character normally maps to a source byte (`srcmap`),
+which is what makes a selection quotable. Box-drawing is not the author's text, so an art
+block carries no per-cell offsets: `cells` are all `None` and no selection can start inside a
+picture. But a block-level comment must still store a quote the anchor can resolve, so
+`rendered_in_range` returns the *source* an art block stands for — the Mermaid source, or
+`![alt](url)` — instead of the empty string it would otherwise produce. Without that,
+commenting on a diagram wrote an annotation with no `originalText`.
+
+Consequences worth knowing: art never word-wraps (a narrow terminal clips a diagram, as it
+clips a wide table); an image is re-sampled from a bounded thumbnail on resize, because unlike
+text its shape is chosen to fit the width; and an image alongside text in one paragraph keeps
+its normal rendering, because the text is content someone may want to quote.
+
+## 16. Mermaid rendering shells out, once per document (2026-09-08)
+
+`grok-mermaid` is the only Mermaid-to-terminal layout engine worth using and it is JavaScript,
+so the binary shells out to Node with an embedded bridge script (`include_str!`). This is the
+one runtime dependency outside the binary, which is why it is failure-shaped everywhere: no
+`node`, no `grok-mermaid`, a diagram the renderer rejects, or a renderer that hangs past
+`timeout_ms` all fall back to showing the fence as an ordinary code block. Nothing about a
+diagram can fail a document.
+
+Two costs forced the shape. Node's startup is ~65 ms and dwarfs laying out a diagram, so all
+of a document's diagrams go through **one** process: `--bench` on twenty diagrams went from
+1375 ms to 79 ms. And the first *renderer-level* failure sets a process-wide flag, so a machine
+without Node spawns one process per run rather than one per fence — twenty fences cost 22 ms
+instead of twenty failed spawns. The bridge distinguishes the two cases explicitly (`kind:
+"renderer"` versus a per-diagram `ok: false`) rather than making the caller match on error
+strings.
+
+The reply's diagram count is never trusted over the request's: results are zipped back by
+input index so a short or malformed reply cannot shift a diagram onto the wrong block.

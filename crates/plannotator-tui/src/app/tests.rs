@@ -15,6 +15,7 @@ use ratatui::crossterm::event::{
 
 use super::send::SendState;
 use super::{App, Mode};
+use crate::config::ArtConfig;
 use crate::delivery::{Delivery, Discard, HerdrAgent};
 
 /// A fresh, empty data directory for one test. `App::open` resolves the real one, and a
@@ -34,16 +35,23 @@ fn scratch_data_dir() -> PathBuf {
 fn app(delivery: Box<dyn Delivery>) -> App {
     let source =
         DocumentSource::new("# Plan\n\nfirst thing\n".to_owned(), "plan.md", true, Provenance::Stdin);
-    let mut app = App::open(source, 60, delivery).expect("app opens");
+    let mut app = App::open(source, 60, delivery, ArtConfig::disabled()).expect("app opens");
     app.data_dir = scratch_data_dir();
     app
 }
 
 /// `App::open_message` on `candidates()`, isolated like `app`.
 fn message_app(session_id: Option<&str>, delivery: Box<dyn Delivery>) -> App {
-    let mut app =
-        App::open_message("claude", "/tmp/transcript.jsonl", session_id, candidates(), 60, delivery)
-            .expect("opens");
+    let mut app = App::open_message(
+        "claude",
+        "/tmp/transcript.jsonl",
+        session_id,
+        candidates(),
+        60,
+        delivery,
+        ArtConfig::disabled(),
+    )
+    .expect("opens");
     app.data_dir = scratch_data_dir();
     app
 }
@@ -264,7 +272,8 @@ fn open_path(app: &App) -> String {
 #[test]
 fn the_tree_scrolls_to_keep_the_cursor_visible_and_hit_tests_through_the_offset() {
     let root = folder(30);
-    let mut app = App::open_folder(&root, 100, Box::new(Discard)).expect("folder opens");
+    let mut app =
+        App::open_folder(&root, 100, Box::new(Discard), ArtConfig::disabled()).expect("folder opens");
     app.data_dir = scratch_data_dir();
     // 140 columns shows the tree; 20 rows leaves 18 for the body (header + footer).
     draw_sized(&mut app, 140, 20);
