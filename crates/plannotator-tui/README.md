@@ -65,3 +65,5 @@ per run, not once per fence (22 ms for the same file).
   cannot start inside one; comment on the block instead. Art clips rather than wraps when the
   terminal is narrower than the picture.
 - Images render as half-blocks and need truecolor; remote images are never fetched.
+- Every color is a `[theme]` token; diagram spans follow pi's mapping of the `grok-mermaid`
+  classes, so a diagram can be made to look the same as in the agent that wrote it.

@@ -17,12 +17,12 @@ use ratatui::crossterm::event::{
 use ratatui::crossterm::execute;
 
 use crate::app::App;
-use crate::art::ArtContext;
 use crate::config::Config;
 use crate::delivery::{Clipboard, Delivery, Discard, HerdrAgent};
 use crate::doc::Document;
 use crate::herdr::context::HerdrEnv;
 use crate::layout::DocLayout;
+use crate::render::RenderSettings;
 
 const USAGE: &str = "usage:
   plannotator-tui <file.md | folder>
@@ -69,17 +69,18 @@ pub(crate) fn delivery(interactive: bool) -> Box<dyn Delivery> {
 
 fn open_app(path: &PathBuf, width: usize, interactive: bool) -> Result<App> {
     let delivery = delivery(interactive);
-    let art = art_config()?;
+    let render = render_settings()?;
     if path.is_dir() {
-        App::open_folder(path, width, delivery, art)
+        App::open_folder(path, width, delivery, render)
     } else {
-        App::open(open_file(path)?, width, delivery, art)
+        App::open(open_file(path)?, width, delivery, render)
     }
 }
 
-/// The art settings from the user's config file, for every entry point that opens a document.
-pub(crate) fn art_config() -> Result<crate::config::ArtConfig> {
-    Ok(Config::load()?.art())
+/// Rendering settings from the user's config file, for every entry point that opens a document.
+pub(crate) fn render_settings() -> Result<RenderSettings> {
+    let config = Config::load()?;
+    Ok(RenderSettings { art: config.art(), theme: config.theme()? })
 }
 
 fn parse_kind(s: Option<&str>) -> Kind {
@@ -311,7 +312,7 @@ fn bench(path: &PathBuf) -> Result<()> {
     let parse_ms = t.elapsed().as_secs_f64() * 1000.0;
 
     let t = Instant::now();
-    let mut layout = DocLayout::build(&doc, 100, &ArtContext::for_document(Some(path), art_config()?));
+    let mut layout = DocLayout::build(&doc, 100, &render_settings()?.context(Some(path)));
     let build_ms = t.elapsed().as_secs_f64() * 1000.0;
 
     let reflow: Vec<String> = [60usize, 140, 80, 120]
@@ -344,9 +345,12 @@ fn bench(path: &PathBuf) -> Result<()> {
 /// `#` comment, `+` looks good, `-` delete, `%` selected.
 fn snapshot(path: &PathBuf, cols: u16, rows: u16, scroll: i64, select: Option<&str>) -> Result<()> {
     use ratatui::backend::TestBackend;
-    use ratatui::style::{Color, Modifier};
+    use ratatui::style::Modifier;
     let mut terminal = ratatui::Terminal::new(TestBackend::new(cols, rows))?;
     let mut app = open_app(path, doc_width(cols), false)?;
+    // The mark map reads the same palette the frame was drawn with, so a themed run still
+    // reports the annotation under each cell.
+    let theme = render_settings()?.theme;
     terminal.draw(|frame| app.draw(frame))?;
     app.scroll_for_snapshot(scroll);
     if let Some(quote) = select {
@@ -366,9 +370,9 @@ fn snapshot(path: &PathBuf, cols: u16, rows: u16, scroll: i64, select: Option<&s
                 '%'
             } else if style.add_modifier.contains(Modifier::CROSSED_OUT) {
                 '-'
-            } else if style.bg == Some(Color::Indexed(22)) {
+            } else if style.bg == Some(theme.approve_bg) {
                 '+'
-            } else if style.bg == Some(Color::Indexed(58)) {
+            } else if style.bg == Some(theme.comment_bg) {
                 '#'
             } else {
                 ' '

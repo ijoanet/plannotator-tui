@@ -11,11 +11,6 @@ use unicode_width::UnicodeWidthStr;
 use super::App;
 use super::send::SendState;
 
-const SEND_BG: Color = Color::Indexed(30);
-const IDLE_BG: Color = Color::Indexed(238);
-const SENT_BG: Color = Color::Indexed(22);
-const BLOCKED_BG: Color = Color::Indexed(58);
-
 impl App {
     pub(super) fn draw_header(&mut self, frame: &mut Frame, area: Rect) {
         let button = format!(" {} ", self.send_label());
@@ -31,13 +26,14 @@ impl App {
     /// Teal when there is something to send, grey at zero, green once sent, yellow when the
     /// agent refused it.
     fn button_style(&self) -> Style {
+        let theme = self.render.theme;
         match &self.send_state {
             SendState::Ready if self.send_count() == 0 => {
-                Style::new().fg(Color::Gray).bg(IDLE_BG).add_modifier(Modifier::DIM)
+                Style::new().fg(theme.muted).bg(theme.toolbar_bg).add_modifier(Modifier::DIM)
             }
-            SendState::Ready => Style::new().fg(Color::Black).bg(SEND_BG).bold(),
-            SendState::Sent => Style::new().fg(Color::Black).bg(SENT_BG).bold(),
-            SendState::Blocked(_) => Style::new().fg(Color::Black).bg(BLOCKED_BG).bold(),
+            SendState::Ready => Style::new().fg(Color::Black).bg(theme.send_bg).bold(),
+            SendState::Sent => Style::new().fg(Color::Black).bg(theme.approve_bg).bold(),
+            SendState::Blocked(_) => Style::new().fg(Color::Black).bg(theme.comment_bg).bold(),
         }
     }
 }

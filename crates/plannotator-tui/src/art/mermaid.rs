@@ -15,11 +15,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
 
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use serde::{Deserialize, Serialize};
 
 use crate::config::MermaidConfig;
+use crate::theme::Theme;
 
 /// The bridge script, embedded so the binary stays self-contained.
 const SCRIPT: &str = include_str!("render_mermaid.mjs");
@@ -56,7 +57,11 @@ struct ArtSpan {
 
 /// Render each source to styled rows. The result has one entry per input, `None` where that
 /// diagram did not render; an unusable renderer yields all `None`.
-pub(super) fn render_all(sources: &[String], config: &MermaidConfig) -> Vec<Option<Text<'static>>> {
+pub(super) fn render_all(
+    sources: &[String],
+    config: &MermaidConfig,
+    theme: Theme,
+) -> Vec<Option<Text<'static>>> {
     let none = || sources.iter().map(|_| None).collect();
     if sources.is_empty() || RENDERER_UNUSABLE.load(Ordering::Relaxed) {
         return none();
@@ -79,7 +84,7 @@ pub(super) fn render_all(sources: &[String], config: &MermaidConfig) -> Vec<Opti
         .map(|(i, _)| {
             let diagram = response.diagrams.get(i)?;
             // An `ok` diagram with no rows would render as a blank gap; keep the source.
-            (diagram.ok && !diagram.rows.is_empty()).then(|| to_text(&diagram.rows))
+            (diagram.ok && !diagram.rows.is_empty()).then(|| to_text(&diagram.rows, theme))
         })
         .collect()
 }
@@ -121,24 +126,27 @@ fn run(sources: &[String], config: &MermaidConfig) -> anyhow::Result<Vec<u8>> {
     Ok(result?)
 }
 
-/// House style for diagram parts. An unknown class renders in the default foreground, so a
-/// newer `grok-mermaid` that adds one degrades to plain text rather than losing the text.
-fn style_for(class: &str) -> Style {
+/// The theme token for each class `grok-mermaid` emits. This is the mapping pi uses for the
+/// same renderer, so a diagram looks the same here as in the agent that produced it. An
+/// unknown class renders as plain text, so a newer `grok-mermaid` degrades rather than
+/// losing the span.
+fn style_for(class: &str, theme: Theme) -> Style {
     match class {
-        "border" => Style::new().fg(Color::DarkGray),
-        "edge" => Style::new().fg(Color::Blue),
-        "edgeLabel" => Style::new().fg(Color::LightYellow),
-        "title" => Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        "border" => Style::new().fg(theme.border),
+        "text" => Style::new().fg(theme.text),
+        "edge" => Style::new().fg(theme.accent),
+        "edgeLabel" => Style::new().fg(theme.muted),
+        "title" => Style::new().fg(theme.accent).add_modifier(Modifier::BOLD),
         _ => Style::new(),
     }
 }
 
-fn to_text(rows: &[Vec<ArtSpan>]) -> Text<'static> {
+fn to_text(rows: &[Vec<ArtSpan>], theme: Theme) -> Text<'static> {
     let lines = rows
         .iter()
         .map(|row| {
             let spans: Vec<Span<'static>> =
-                row.iter().map(|s| Span::styled(s.text.clone(), style_for(&s.cls))).collect();
+                row.iter().map(|s| Span::styled(s.text.clone(), style_for(&s.cls, theme))).collect();
             Line::from(spans)
         })
         .collect::<Vec<_>>();
@@ -148,6 +156,8 @@ fn to_text(rows: &[Vec<ArtSpan>]) -> Text<'static> {
 #[cfg(test)]
 #[allow(clippy::expect_used, reason = "tests assert by panicking")]
 mod tests {
+    use ratatui::style::Color;
+
     use super::*;
 
     fn parse(json: &str) -> Response {
@@ -163,23 +173,37 @@ mod tests {
             ]}]}"#,
         );
         let rows = &response.diagrams.first().expect("one diagram").rows;
-        let text = to_text(rows);
+        let text = to_text(rows, Theme::default());
         assert_eq!(text.lines.len(), 2);
         assert_eq!(text.lines.first().map(ToString::to_string).as_deref(), Some("  ┌─┐"));
         let border = text.lines.first().and_then(|l| l.spans.get(1)).expect("border span");
-        assert_eq!(border.style.fg, Some(Color::DarkGray));
+        assert_eq!(border.style.fg, Some(Theme::default().border));
         let label = text.lines.get(1).and_then(|l| l.spans.first()).expect("label span");
-        assert_eq!(label.style.fg, Some(Color::LightYellow));
+        assert_eq!(label.style.fg, Some(Theme::default().muted));
+    }
+
+    #[test]
+    fn every_class_maps_to_the_token_pi_uses_for_it() {
+        // The mapping is the contract with pi: the same renderer must colour the same way in
+        // both, so a diagram is not re-read differently in review than it was when written.
+        let theme = Theme { accent: Color::Blue, muted: Color::Gray, ..Theme::default() };
+        assert_eq!(style_for("border", theme).fg, Some(theme.border), "border -> border");
+        assert_eq!(style_for("text", theme).fg, Some(theme.text), "text -> text");
+        assert_eq!(style_for("edge", theme).fg, Some(theme.accent), "edge -> accent");
+        assert_eq!(style_for("edgeLabel", theme).fg, Some(theme.muted), "edgeLabel -> muted");
+        let title = style_for("title", theme);
+        assert_eq!(title.fg, Some(theme.accent), "title -> accent");
+        assert!(title.add_modifier.contains(Modifier::BOLD), "title is bold");
     }
 
     #[test]
     fn unknown_class_keeps_its_text_in_the_default_style() {
-        assert_eq!(style_for("somethingNew"), Style::new());
-        assert_eq!(style_for("none"), Style::new());
+        assert_eq!(style_for("somethingNew", Theme::default()), Style::new());
+        assert_eq!(style_for("none", Theme::default()), Style::new());
     }
 
     #[test]
     fn no_diagrams_never_spawns_a_renderer() {
-        assert!(render_all(&[], &MermaidConfig::default()).is_empty());
+        assert!(render_all(&[], &MermaidConfig::default(), Theme::default()).is_empty());
     }
 }

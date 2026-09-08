@@ -12,13 +12,12 @@ mod image;
 mod mermaid;
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 
 use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
 use ratatui::text::Text;
 
-use crate::config::ArtConfig;
 use crate::doc::{BlockKind, Document, parse_options};
+use crate::render::RenderContext;
 
 pub(crate) use self::image::ImageArt;
 
@@ -29,33 +28,6 @@ pub(crate) enum ArtSource {
     Mermaid,
     /// An image is re-sampled to the current width from a bounded thumbnail.
     Image(ImageArt),
-}
-
-/// Everything art rendering needs from outside the layout: where relative paths point and
-/// what the user turned on.
-#[derive(Debug, Clone)]
-pub(crate) struct ArtContext {
-    /// Directory that relative image paths resolve against.
-    pub(crate) base_dir: PathBuf,
-    pub(crate) config: ArtConfig,
-}
-
-impl ArtContext {
-    /// Art context for a document read from `path`; relative paths follow the document.
-    pub(crate) fn for_document(path: Option<&Path>, config: ArtConfig) -> Self {
-        let base_dir = path
-            .and_then(Path::parent)
-            .map(Path::to_path_buf)
-            .or_else(|| std::env::current_dir().ok())
-            .unwrap_or_else(|| PathBuf::from("."));
-        Self { base_dir, config }
-    }
-
-    /// Art disabled entirely: every block renders as text.
-    #[cfg(test)]
-    pub(crate) fn disabled() -> Self {
-        Self { base_dir: PathBuf::from("."), config: ArtConfig::disabled() }
-    }
 }
 
 /// One rendered picture: the styled rows and what could redo them at another width.
@@ -70,24 +42,26 @@ pub(crate) struct Art {
 /// One pass over the whole document rather than a call per block, because all of its Mermaid
 /// diagrams are rendered by a single Node process. `width` is the column budget; only images
 /// use it.
-pub(crate) fn render_all(doc: &Document, width: usize, ctx: &ArtContext) -> HashMap<usize, Art> {
+pub(crate) fn render_all(doc: &Document, width: usize, ctx: &RenderContext) -> HashMap<usize, Art> {
     let mut art = HashMap::new();
 
-    if ctx.config.image.enabled {
+    if ctx.art.image.enabled {
         let paragraphs = blocks_of_kind(doc, BlockKind::Paragraph);
         for (index, source) in paragraphs {
             let Some(url) = single_image_url(source) else { continue };
-            let Some(image) = image::load(&url, &ctx.base_dir, &ctx.config.image) else { continue };
+            let Some(image) = image::load(&url, &ctx.base_dir, &ctx.art.image) else { continue };
             let text = image.to_text(width);
             art.insert(index, Art { text, source: ArtSource::Image(image) });
         }
     }
 
-    if ctx.config.mermaid.enabled {
+    if ctx.art.mermaid.enabled {
         let (indices, sources): (Vec<usize>, Vec<String>) = blocks_of_kind(doc, BlockKind::CodeBlock)
             .filter_map(|(index, source)| mermaid_code(source).map(|code| (index, code)))
             .unzip();
-        for (index, text) in indices.into_iter().zip(mermaid::render_all(&sources, &ctx.config.mermaid)) {
+        for (index, text) in
+            indices.into_iter().zip(mermaid::render_all(&sources, &ctx.art.mermaid, ctx.theme))
+        {
             if let Some(text) = text {
                 art.insert(index, Art { text, source: ArtSource::Mermaid });
             }

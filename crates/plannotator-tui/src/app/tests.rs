@@ -15,8 +15,8 @@ use ratatui::crossterm::event::{
 
 use super::send::SendState;
 use super::{App, Mode};
-use crate::config::ArtConfig;
 use crate::delivery::{Delivery, Discard, HerdrAgent};
+use crate::render::RenderSettings;
 
 /// A fresh, empty data directory for one test. `App::open` resolves the real one, and a
 /// successful send archives into it, so every app under test is pointed here instead:
@@ -35,7 +35,7 @@ fn scratch_data_dir() -> PathBuf {
 fn app(delivery: Box<dyn Delivery>) -> App {
     let source =
         DocumentSource::new("# Plan\n\nfirst thing\n".to_owned(), "plan.md", true, Provenance::Stdin);
-    let mut app = App::open(source, 60, delivery, ArtConfig::disabled()).expect("app opens");
+    let mut app = App::open(source, 60, delivery, RenderSettings::text_only()).expect("app opens");
     app.data_dir = scratch_data_dir();
     app
 }
@@ -49,7 +49,7 @@ fn message_app(session_id: Option<&str>, delivery: Box<dyn Delivery>) -> App {
         candidates(),
         60,
         delivery,
-        ArtConfig::disabled(),
+        RenderSettings::text_only(),
     )
     .expect("opens");
     app.data_dir = scratch_data_dir();
@@ -273,7 +273,7 @@ fn open_path(app: &App) -> String {
 fn the_tree_scrolls_to_keep_the_cursor_visible_and_hit_tests_through_the_offset() {
     let root = folder(30);
     let mut app =
-        App::open_folder(&root, 100, Box::new(Discard), ArtConfig::disabled()).expect("folder opens");
+        App::open_folder(&root, 100, Box::new(Discard), RenderSettings::text_only()).expect("folder opens");
     app.data_dir = scratch_data_dir();
     // 140 columns shows the tree; 20 rows leaves 18 for the body (header + footer).
     draw_sized(&mut app, 140, 20);

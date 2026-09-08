@@ -95,6 +95,49 @@ stays `[img] alt` — neither is an error. Images are read from disk only: a rem
 image is never fetched. Local `png`, `jpeg`, `gif` and `webp` are supported; pictures need a
 truecolor terminal.
 
+## Colors
+
+Every color is a named token in `[theme]`. A value is anything `ratatui` parses — `#41464e`,
+`cyan`, `light-yellow`, `238`, `reset` — and an empty value keeps the default, so a config only
+names what it changes. `plannotator-tui config` prints every token and its effective value.
+
+```toml
+[theme]
+text = ""          heading = ""      heading_deep = ""   code = ""
+link = ""          quote = ""        accent = ""         muted = ""
+border = ""        comment = ""      approve = ""        delete = ""
+comment_bg = ""    approve_bg = ""   block_bg = ""       cursor_bg = ""
+toolbar_bg = ""    send_bg = ""
+```
+
+`accent` is focused borders, the selected-block marker, diagram edges and diagram titles;
+`muted` is unfocused borders and diagram edge labels; `border` is diagram box-drawing.
+
+Diagram spans follow the mapping pi uses for the same renderer — `border → border`,
+`text → text`, `edge → accent`, `edgeLabel → muted`, `title → accent` bold — so pointing these
+tokens at your agent's palette makes a plan look the same being reviewed as it did being
+written. Matching pi's `synth`, for example:
+
+```toml
+[theme]
+text = "#c1c3c4"          # pi text
+heading = "#ea770d"       # pi mdHeading
+heading_deep = "#ea770d"
+code = "#06ea61"          # pi mdCode
+link = "#42fff9"          # pi mdLink
+quote = "#abacad"         # pi mdQuote
+accent = "#03aeff"        # pi accent
+muted = "#abacad"         # pi muted
+border = "#41464e"        # pi borderMuted
+comment = "#c9d364"       # pi warning
+approve = "#06ea61"       # pi success
+delete = "#ff6865"        # pi error
+block_bg = "#202527"      # pi bgMuted
+cursor_bg = "#202d3a"     # pi selBg
+toolbar_bg = "#202527"
+send_bg = "#03aeff"
+```
+
 ## Inside Herdr
 
 Install [Herdr Annotate](https://github.com/plannotator/herdr-annotate); it bundles this binary,

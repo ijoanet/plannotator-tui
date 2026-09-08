@@ -9,7 +9,7 @@ use plannotator_tui_hosts::Message;
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 use unicode_width::UnicodeWidthStr as _;
@@ -30,10 +30,10 @@ impl App {
         messages: Vec<Message>,
         width: usize,
         delivery: Box<dyn crate::delivery::Delivery>,
-        art: crate::config::ArtConfig,
+        render: crate::render::RenderSettings,
     ) -> Result<Self> {
         let Some(newest) = messages.first() else { anyhow::bail!("no message to open") };
-        let mut app = Self::open(message_source(host, session_id, newest), width, delivery, art)?;
+        let mut app = Self::open(message_source(host, session_id, newest), width, delivery, render)?;
         host.clone_into(&mut app.message_host);
         transcript.clone_into(&mut app.message_transcript);
         app.message_session = session_id.map(str::to_owned);
@@ -58,7 +58,7 @@ impl App {
         } else {
             let Some(message) = self.candidates.get(index) else { return Ok(()) };
             let source = message_source(&self.message_host, self.message_session.as_deref(), message);
-            Open::new(source, self.open.layout.width, &self.data_dir, &self.project, &self.art)?
+            Open::new(source, self.open.layout.width, &self.data_dir, &self.project, &self.render)?
         };
         let leaving = std::mem::replace(&mut self.open, next);
         self.pick_cache.insert(self.pick_open, leaving);
@@ -138,7 +138,7 @@ impl App {
         let boxed = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::new().fg(Color::Cyan))
+            .border_style(Style::new().fg(self.render.theme.accent))
             .title(Span::styled(" which message? ", Style::new().dim()))
             .title_bottom(Span::styled(
                 " ↑↓ preview · enter open · esc cancel · q quit ",

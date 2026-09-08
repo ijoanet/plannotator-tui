@@ -17,12 +17,18 @@ pub(crate) struct Config {
     pub(crate) herdr: HerdrConfig,
     pub(crate) mermaid: MermaidConfig,
     pub(crate) image: ImageConfig,
+    pub(crate) theme: crate::theme::ThemeConfig,
 }
 
 impl Config {
     /// The art renderers' settings, as the layout wants them.
     pub(crate) fn art(&self) -> ArtConfig {
         ArtConfig { mermaid: self.mermaid.clone(), image: self.image.clone() }
+    }
+
+    /// The resolved palette, or an error naming the token that is not a color.
+    pub(crate) fn theme(&self) -> Result<crate::theme::Theme> {
+        crate::theme::Theme::resolve(&self.theme)
     }
 }
 

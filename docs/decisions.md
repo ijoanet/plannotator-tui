@@ -410,3 +410,29 @@ strings.
 
 The reply's diagram count is never trusted over the request's: results are zipped back by
 input index so a short or malformed reply cannot shift a diagram onto the wrong block.
+
+## 17. One palette, named by meaning, shared with the diagram renderer (2026-09-08)
+
+Colors were literals spread across `layout` (markdown), `art/mermaid` (diagram spans) and
+`app/draw`, `app/header`, `app/pick` (chrome), including two `Color::Indexed` values that
+`--snapshot`'s mark map compared against by hand. That made the palette impossible to retune
+and easy to break: changing an annotation background silently broke the mark map.
+
+`theme.rs` now holds one token per thing that has a color, named for its **meaning**
+(`accent`, `muted`, `border`) rather than for a color. Meaning is what lets a config file match
+an outside palette without this crate knowing anything about it, and it is what keeps the
+document, the diagram and the chrome coherent when any one of them is retuned. Values are
+parsed by `ratatui`'s `Color::FromStr`, so `#41464e`, `cyan`, `238` and `reset` all work and a
+typo names the token and the value. Defaults are the previous literals exactly, so an existing
+install looks unchanged.
+
+The diagram mapping is deliberately **pi's**: `grok-mermaid` labels each span
+`border`/`text`/`edge`/`edgeLabel`/`title`, and pi renders those as `borderMuted`, `text`,
+`accent`, `muted` and bold `accent`. Adopting the same mapping means a reviewer pointing these
+tokens at the agent's own theme sees a diagram exactly as the agent drew it — the plan is not
+re-read in different colors than it was written. It also replaced two choices that were merely
+inherited: edges were `Blue` while focused borders were `Cyan`, and edge labels shared
+`LightYellow` with inline code, so a diagram never looked like part of the same app.
+
+`--snapshot`'s mark map now reads the resolved theme instead of literals, so a themed run still
+reports which annotation covers each cell.

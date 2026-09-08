@@ -18,6 +18,10 @@ herdr/                    the Herdr plugin manifest. The launcher it runs is
 Markdown parsing is `pulldown-cmark`; rendering to styled text is `tui-markdown`. We never
 interpret markdown ourselves. Anything that needs to know "what is a heading" is a bug.
 
+`src/theme.rs` owns every color, one token per meaning; nothing else may name a color. `src/render.rs`
+carries what rendering needs from outside the layout (theme, art settings, the document's directory),
+so `layout` and `art` share it without importing each other. See `docs/decisions.md` 17.
+
 `src/art/` is the exception to "one seam per external system" being in-process: a Mermaid fence
 is laid out by `grok-mermaid` under Node, spawned once per document with an embedded bridge
 script. It must never be able to fail a document — no Node, no package, a rejected diagram and

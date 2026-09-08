@@ -5,7 +5,7 @@
 use plannotator_tui_schema::Kind;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style, Stylize};
+use ratatui::style::{Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 use unicode_width::UnicodeWidthStr;
@@ -21,20 +21,6 @@ const TREE_WIDTH: u16 = 28;
 /// Below this the tree is hidden unless toggled on; Tab still reaches it.
 pub(super) const TREE_MIN_TOTAL_WIDTH: u16 = 120;
 const COMPOSE_WIDTH: u16 = 48;
-
-pub(crate) const COMMENT_BG: Color = Color::Indexed(58);
-pub(crate) const APPROVE_BG: Color = Color::Indexed(22);
-const BLOCK_BG: Color = Color::Indexed(236);
-const TOOLBAR_BG: Color = Color::Indexed(238);
-const CURSOR_BG: Color = Color::Indexed(240);
-
-fn accent(kind: Kind) -> Color {
-    match kind {
-        Kind::Comment => Color::Yellow,
-        Kind::LooksGood => Color::Green,
-        Kind::Delete => Color::Red,
-    }
-}
 
 /// Painting precedence when annotations overlap a cell.
 fn priority(kind: Kind) -> u8 {
@@ -102,9 +88,10 @@ impl App {
     }
 
     fn draw_tree(&self, frame: &mut Frame, area: Rect) {
+        let theme = self.render.theme;
         let Some(tree) = &self.tree else { return };
         let focused = self.focus == Focus::Tree;
-        let border = if focused { Style::new().fg(Color::Cyan) } else { Style::new().fg(Color::DarkGray) };
+        let border = if focused { Style::new().fg(theme.accent) } else { Style::new().fg(theme.muted) };
         let block = Block::default().borders(Borders::RIGHT).border_style(border);
         let inner = block.inner(area);
         frame.render_widget(block, area);
@@ -128,9 +115,9 @@ impl App {
                 };
                 let mut style = if row.is_dir { Style::new().dim() } else { Style::new() };
                 if open_path == Some(row.path.as_path()) {
-                    style = style.bold().fg(Color::Cyan);
+                    style = style.bold().fg(theme.accent);
                 }
-                let row_bg = (focused && i == self.tree_cursor).then_some(BLOCK_BG);
+                let row_bg = (focused && i == self.tree_cursor).then_some(theme.block_bg);
                 if let Some(bg) = row_bg {
                     style = style.bg(bg);
                 }
@@ -143,7 +130,7 @@ impl App {
                 Line::from(vec![
                     Span::styled(format!(" {name}"), style),
                     Span::styled(" ".repeat(pad), with_bg(Style::new())),
-                    Span::styled(count, with_bg(Style::new().fg(Color::Yellow))),
+                    Span::styled(count, with_bg(Style::new().fg(theme.comment))),
                 ])
             })
             .collect();
@@ -151,6 +138,7 @@ impl App {
     }
 
     fn draw_document(&self, frame: &mut Frame, gutter: Rect, doc: Rect) {
+        let theme = self.render.theme;
         let placed = self.open.store.placed();
         let text_selection_active = self.selection.is_some();
         let doc_focused = self.focus == Focus::Document;
@@ -166,7 +154,7 @@ impl App {
             if block == self.selected && !text_selection_active && self.pending.is_none() && doc_focused {
                 buf.set_style(
                     Rect { x: doc.x, y: screen_y, width: doc.width, height: 1 },
-                    Style::new().bg(BLOCK_BG),
+                    Style::new().bg(theme.block_bg),
                 );
             }
 
@@ -181,10 +169,10 @@ impl App {
                 let Some(kind) = kind else { continue };
                 row_has_annotation = true;
                 let style = match kind {
-                    Kind::Comment => Style::new().bg(COMMENT_BG),
-                    Kind::LooksGood => Style::new().bg(APPROVE_BG),
+                    Kind::Comment => Style::new().bg(theme.comment_bg),
+                    Kind::LooksGood => Style::new().bg(theme.approve_bg),
                     Kind::Delete => {
-                        Style::new().fg(Color::Red).add_modifier(Modifier::CROSSED_OUT | Modifier::DIM)
+                        Style::new().fg(theme.delete).add_modifier(Modifier::CROSSED_OUT | Modifier::DIM)
                     }
                 };
                 buf.set_style(Rect { x: doc.x + col as u16, y: screen_y, width: 1, height: 1 }, style);
@@ -202,12 +190,12 @@ impl App {
             // Keyboard cursor, visible while selecting with the keyboard.
             if doc_focused && self.selection.is_some_and(|s| s.dragging) && row_index == self.cursor.0 {
                 let x = doc.x + (self.cursor.1.min(usize::from(doc.width).saturating_sub(1))) as u16;
-                buf.set_style(Rect { x, y: screen_y, width: 1, height: 1 }, Style::new().bg(CURSOR_BG));
+                buf.set_style(Rect { x, y: screen_y, width: 1, height: 1 }, Style::new().bg(theme.cursor_bg));
             }
 
             let marker = match (block == self.selected, row_has_annotation) {
-                (true, _) => Span::styled("▍", Style::new().fg(Color::Cyan)),
-                (false, true) => Span::styled("▍", Style::new().fg(Color::Yellow)),
+                (true, _) => Span::styled("▍", Style::new().fg(theme.accent)),
+                (false, true) => Span::styled("▍", Style::new().fg(theme.comment)),
                 (false, false) => Span::raw(" "),
             };
             buf.set_span(gutter.x, screen_y, &marker, 1);
@@ -237,17 +225,18 @@ impl App {
     }
 
     fn draw_toolbar(&mut self, frame: &mut Frame) {
+        let theme = self.render.theme;
         let labels: Vec<String> = TOOLBAR.iter().map(|(g, l, k, _)| format!(" {g} {l} ({k}) ")).collect();
         let width: u16 = labels.iter().map(|l| l.width() as u16).sum::<u16>() + 1;
         let Some(rect) = self.float_origin(1, width) else { return };
         frame.render_widget(Clear, rect);
         let buf = frame.buffer_mut();
-        buf.set_style(rect, Style::new().bg(TOOLBAR_BG));
+        buf.set_style(rect, Style::new().bg(theme.toolbar_bg));
         let mut x = rect.x + 1;
         let mut spans = [0..0, 0..0, 0..0];
         for ((label, item), span) in labels.iter().zip(TOOLBAR.iter()).zip(spans.iter_mut()) {
             let w = label.width() as u16;
-            let style = Style::new().fg(accent(item.3)).bg(TOOLBAR_BG).bold();
+            let style = Style::new().fg(theme.kind(item.3)).bg(theme.toolbar_bg).bold();
             buf.set_span(x, rect.y, &Span::styled(label.as_str(), style), w);
             *span = x..x + w;
             x += w;
@@ -265,6 +254,7 @@ impl App {
     }
 
     fn draw_compose(&self, frame: &mut Frame, title: &str) {
+        let theme = self.render.theme;
         let wrap_width = usize::from(COMPOSE_WIDTH.saturating_sub(3));
         let (lines, cursor_row, cursor_col) = self.compose.wrapped(wrap_width);
         let content_rows = lines.len().clamp(1, 8);
@@ -281,7 +271,7 @@ impl App {
         let boxed = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::new().fg(Color::Yellow))
+            .border_style(Style::new().fg(theme.comment))
             .title(Span::styled(title.to_owned(), Style::new().dim()));
         let inner = boxed.inner(rect);
         frame.render_widget(boxed, rect);
@@ -310,6 +300,7 @@ impl App {
     }
 
     fn draw_rail(&mut self, frame: &mut Frame, rail: Rect) {
+        let theme = self.render.theme;
         let view_end = self.scroll + usize::from(rail.height);
         let rail_focused = self.focus == Focus::Rail;
         let mut next_y = rail.y;
@@ -343,11 +334,11 @@ impl App {
             }
             let highlighted = if rail_focused { index == self.rail_cursor } else { block == self.selected };
             let border =
-                if highlighted { Style::new().fg(accent(kind)) } else { Style::new().fg(Color::DarkGray) };
+                if highlighted { Style::new().fg(theme.kind(kind)) } else { Style::new().fg(theme.muted) };
             let border = if rail_focused && index == self.rail_cursor { border.bold() } else { border };
             let title = Span::styled(
                 format!(" {} {} ", glyph(kind), short_id(&placed.annotation.id)),
-                Style::new().fg(accent(kind)),
+                Style::new().fg(theme.kind(kind)),
             );
             let bubble = Block::default()
                 .borders(Borders::ALL)

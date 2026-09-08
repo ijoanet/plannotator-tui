@@ -21,12 +21,11 @@ use anyhow::{Context, Result};
 use plannotator_tui_schema::{DocumentSource, Kind, Provenance};
 use ratatui::layout::Rect;
 
-use crate::art::ArtContext;
-use crate::config::ArtConfig;
 use crate::delivery::Delivery;
 use crate::doc::Document;
 use crate::export;
 use crate::layout::DocLayout;
+use crate::render::RenderSettings;
 use crate::store::{Location, Store};
 use crate::tree::Tree;
 use crate::workspace_paths;
@@ -102,14 +101,14 @@ impl Open {
         width: usize,
         data_dir: &Path,
         project: &str,
-        art: &ArtConfig,
+        render: &RenderSettings,
     ) -> Result<Self> {
         let doc = Document::parse(source.content.clone());
         let file = match &source.provenance {
             Provenance::File { path } => Some(path.as_path()),
             _ => None,
         };
-        let layout = DocLayout::build(&doc, width, &ArtContext::for_document(file, art.clone()));
+        let layout = DocLayout::build(&doc, width, &render.context(file));
         let store = match (&source.provenance, source.transient) {
             (Provenance::File { path }, false) => {
                 Store::load(&Location::for_file(data_dir, project, path), &doc)?
@@ -124,8 +123,8 @@ use self::compose::Compose;
 
 pub(crate) struct App {
     open: Open,
-    /// Which blocks render as pictures; fixed for the process, applied to every file opened.
-    art: ArtConfig,
+    /// How documents are rendered; fixed for the process, applied to every file opened.
+    render: RenderSettings,
     /// Where annotations are stored and how this folder is named there.
     data_dir: PathBuf,
     project: String,
@@ -194,7 +193,7 @@ impl App {
         source: DocumentSource,
         width: usize,
         delivery: Box<dyn Delivery>,
-        art: ArtConfig,
+        render: RenderSettings,
     ) -> Result<Self> {
         let data_dir = workspace_paths::data_dir();
         let folder = match &source.provenance {
@@ -202,11 +201,11 @@ impl App {
             _ => std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
         };
         let project = workspace_paths::project_name(&folder);
-        let open = Open::new(source, width, &data_dir, &project, &art)?;
+        let open = Open::new(source, width, &data_dir, &project, &render)?;
         let send_state = if open.store.all_delivered() { SendState::Sent } else { SendState::Ready };
         Ok(Self {
             open,
-            art,
+            render,
             data_dir,
             project,
             tree: None,
@@ -250,7 +249,7 @@ impl App {
         root: &Path,
         width: usize,
         delivery: Box<dyn Delivery>,
-        art: ArtConfig,
+        render: RenderSettings,
     ) -> Result<Self> {
         let mut tree = Tree::scan(root)?;
         let first = crate::tree::first_file_shallow(root, 2_000);
@@ -266,11 +265,11 @@ impl App {
                 Provenance::Stdin,
             ),
         };
-        let mut app = Self::open(source, width, delivery, art)?;
+        let mut app = Self::open(source, width, delivery, render)?;
         // The project is the folder's, not the first file's parent's.
         app.project = workspace_paths::project_name(root);
         if let Some(path) = &first {
-            app.open = Open::new(read_file(path)?, width, &app.data_dir, &app.project, &app.art)?;
+            app.open = Open::new(read_file(path)?, width, &app.data_dir, &app.project, &app.render)?;
         }
         app.derive_send_state();
         app.refresh_counts(&mut tree);
@@ -324,7 +323,7 @@ impl App {
             return Ok(());
         }
         let width = self.open.layout.width;
-        self.open = Open::new(read_file(&path)?, width, &self.data_dir, &self.project, &self.art)?;
+        self.open = Open::new(read_file(&path)?, width, &self.data_dir, &self.project, &self.render)?;
         self.derive_send_state();
         self.scroll = 0;
         self.selected = 0;
@@ -417,7 +416,7 @@ impl App {
         let width = self.open.layout.width;
         let mut out = String::new();
         for path in self.annotated_files() {
-            let open = Open::new(read_file(&path)?, width, &self.data_dir, &self.project, &self.art)?;
+            let open = Open::new(read_file(&path)?, width, &self.data_dir, &self.project, &self.render)?;
             let relative = path.strip_prefix(tree.root()).unwrap_or(&path);
             let _ = writeln!(out, "{}", Self::feedback_for(&open, &relative.display().to_string()));
         }
@@ -453,7 +452,8 @@ impl App {
             if self.is_open(&path) {
                 self.open.store.record_delivery(target)?;
             } else {
-                let mut open = Open::new(read_file(&path)?, width, &self.data_dir, &self.project, &self.art)?;
+                let mut open =
+                    Open::new(read_file(&path)?, width, &self.data_dir, &self.project, &self.render)?;
                 open.store.record_delivery(target)?;
             }
         }
@@ -471,7 +471,7 @@ impl App {
             let delivered = if self.is_open(&path) {
                 self.open.store.all_delivered()
             } else {
-                Open::new(read_file(&path)?, width, &self.data_dir, &self.project, &self.art)?
+                Open::new(read_file(&path)?, width, &self.data_dir, &self.project, &self.render)?
                     .store
                     .all_delivered()
             };
@@ -559,11 +559,8 @@ impl App {
         let path = path.clone();
         self.open.source = read_file(&path)?;
         self.open.doc = Document::parse(self.open.source.content.clone());
-        self.open.layout = DocLayout::build(
-            &self.open.doc,
-            self.open.layout.width,
-            &ArtContext::for_document(Some(&path), self.art.clone()),
-        );
+        self.open.layout =
+            DocLayout::build(&self.open.doc, self.open.layout.width, &self.render.context(Some(&path)));
         self.open.store.resolve_all(&self.open.doc);
         self.clear_selection();
         self.selected = self.selected.min(self.open.doc.blocks.len().saturating_sub(1));

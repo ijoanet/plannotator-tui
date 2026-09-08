@@ -6,13 +6,15 @@
 
 use std::ops::Range;
 
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Text};
 use tui_markdown::{Options, StyleSheet};
 
-use crate::art::{Art, ArtContext, ArtSource};
+use crate::art::{Art, ArtSource};
 use crate::doc::{BlockKind, Document};
+use crate::render::RenderContext;
 use crate::srcmap::{LineOffsets, align};
+use crate::theme::Theme;
 use crate::wrap::{Row, clip_line, wrap_line};
 
 /// Rows of vertical space between blocks.
@@ -21,27 +23,27 @@ const BLOCK_GAP: usize = 1;
 /// House style: no `#` markers, headings carry weight through bold/underline rather than
 /// background color, so the palette stays available for selection and annotations.
 #[derive(Debug, Clone)]
-struct Styles;
+struct Styles(Theme);
 
 impl StyleSheet for Styles {
     fn heading(&self, level: u8) -> Style {
         match level {
-            1 => Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
-            2 => Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-            _ => Style::new().fg(Color::LightCyan).add_modifier(Modifier::BOLD),
+            1 => Style::new().fg(self.0.heading).add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+            2 => Style::new().fg(self.0.heading).add_modifier(Modifier::BOLD),
+            _ => Style::new().fg(self.0.heading_deep).add_modifier(Modifier::BOLD),
         }
     }
     fn heading_marker(&self, _level: u8) -> &'static str {
         ""
     }
     fn code(&self) -> Style {
-        Style::new().fg(Color::LightYellow)
+        Style::new().fg(self.0.code)
     }
     fn link(&self) -> Style {
-        Style::new().fg(Color::Blue).add_modifier(Modifier::UNDERLINED)
+        Style::new().fg(self.0.link).add_modifier(Modifier::UNDERLINED)
     }
     fn blockquote(&self) -> Style {
-        Style::new().fg(Color::Green).add_modifier(Modifier::ITALIC)
+        Style::new().fg(self.0.quote).add_modifier(Modifier::ITALIC)
     }
 }
 
@@ -85,9 +87,9 @@ fn art_offsets(text: &Text<'_>) -> Vec<LineOffsets> {
         .collect()
 }
 
-fn render_block(doc: &Document, index: usize) -> (Text<'static>, Vec<LineOffsets>) {
+fn render_block(doc: &Document, index: usize, theme: Theme) -> (Text<'static>, Vec<LineOffsets>) {
     let source = doc.block_text(index);
-    let text = own(tui_markdown::from_str_with_options(source, &Options::new(Styles)));
+    let text = own(tui_markdown::from_str_with_options(source, &Options::new(Styles(theme))));
     let plain: Vec<String> = text.lines.iter().map(ToString::to_string).collect();
     let base = doc.blocks.get(index).map_or(0, |b| b.range.start);
     let offsets = align(&plain, source, base);
@@ -109,7 +111,7 @@ fn own(text: Text<'_>) -> Text<'static> {
 
 impl DocLayout {
     /// Render every block once (the expensive part) and lay out for `width`.
-    pub(crate) fn build(doc: &Document, width: usize, ctx: &ArtContext) -> Self {
+    pub(crate) fn build(doc: &Document, width: usize, ctx: &RenderContext) -> Self {
         let mut art = crate::art::render_all(doc, width, ctx);
         let blocks = doc
             .blocks
@@ -121,7 +123,7 @@ impl DocLayout {
                     let offsets = art_offsets(&text);
                     (text, offsets, Some(source))
                 } else {
-                    let (text, offsets) = render_block(doc, i);
+                    let (text, offsets) = render_block(doc, i, ctx.theme);
                     (text, offsets, None)
                 };
                 RenderedBlock {
@@ -245,7 +247,7 @@ mod tests {
     #[test]
     fn rendered_text_strips_markup_and_joins_blocks_without_separator() {
         let doc = Document::parse("Ship the **login page**\nby Friday.\n\nNext para.\n".to_owned());
-        let layout = DocLayout::build(&doc, 80, &ArtContext::disabled());
+        let layout = DocLayout::build(&doc, 80, &RenderContext::text_only());
         let whole = 0..doc.source.len();
         assert_eq!(layout.rendered_in_range(&doc.source, &whole), "Ship the login page by Friday.Next para.");
         let bold = doc.source.find("**login").expect("present");
@@ -268,7 +270,8 @@ mod tests {
 
     fn image_layout(dir: &Path, width: usize) -> (Document, DocLayout) {
         let doc = Document::parse("![logo](logo.png)\n".to_owned());
-        let ctx = ArtContext { base_dir: dir.to_path_buf(), config: ArtConfig::default() };
+        let ctx =
+            RenderContext { base_dir: dir.to_path_buf(), art: ArtConfig::default(), theme: Theme::default() };
         let layout = DocLayout::build(&doc, width, &ctx);
         (doc, layout)
     }
