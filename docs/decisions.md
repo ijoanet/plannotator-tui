@@ -464,3 +464,23 @@ wins, so a change in walk order cannot flip which of two same-named files is cho
 
 Only decodable extensions resolve. `![[note.md]]` is a transclusion, not a picture; rendering it
 as one would be a lie, and following it is a different feature.
+
+## 19. A destination is a name, and a badge picks its own foreground (2026-09-08)
+
+Two defects with one cause: decision 17 made every colour a token but left two values that only
+worked for the palette they were first written against.
+
+The Send button painted `Color::Black` on a themed fill. On the old green that was 2.6:1; on a
+darker themed green it fell to **1.64:1**, unreadable. A badge cannot hardcode a foreground it did
+not choose the background for, so `theme::readable_on` derives it from the fill's relative
+luminance (WCAG, the 0.179 threshold browsers use) and returns black or white. It takes a colour,
+not a theme, because it reads no palette. An indexed or named fill has no channels to inspect and
+assumes a dark terminal.
+
+The button also named the destination by pane id — `pi in w18:p1P`. A pane id answers "which
+process", not "where did my review go", which is the question a reviewer actually has. Herdr turns
+out not to help directly: an agent pane carries **no label of its own** (`pane get` returns
+`label: null`); what a human recognises is the *tab* label. So the destination resolves pane label
+(plugin panes set one) → tab label → pane id, costing one extra `herdr tab get` at startup and only
+when the pane is unlabelled. `HerdrAgent` carries the name beside the pane, because delivery still
+addresses the pane — the name is only ever what the human is told.

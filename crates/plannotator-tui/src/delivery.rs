@@ -87,11 +87,14 @@ pub(crate) struct HerdrAgent {
     bin: PathBuf,
     pane: String,
     agent: Option<String>,
+    /// What a human calls that pane (its label, else its tab's). A pane id is not an answer to
+    /// "where did it go", so it is only the fallback.
+    name: Option<String>,
 }
 
 impl HerdrAgent {
-    pub(crate) fn new(bin: PathBuf, pane: String, agent: Option<String>) -> Self {
-        Self { bin, pane, agent }
+    pub(crate) fn new(bin: PathBuf, pane: String, agent: Option<String>, name: Option<String>) -> Self {
+        Self { bin, pane, agent, name }
     }
 }
 
@@ -101,9 +104,10 @@ impl Delivery for HerdrAgent {
     }
 
     fn describe(&self) -> String {
+        let where_ = self.name.clone().unwrap_or_else(|| self.pane.clone());
         match &self.agent {
-            Some(agent) => format!("{agent} in {}", self.pane),
-            None => self.pane.clone(),
+            Some(agent) => format!("{agent} in {where_}"),
+            None => where_,
         }
     }
 
@@ -197,10 +201,20 @@ mod tests {
     fn describe_names_the_agent_when_known() {
         let bin = PathBuf::from("herdr");
         assert_eq!(
-            HerdrAgent::new(bin.clone(), "w1:p1".into(), Some("claude".into())).describe(),
+            HerdrAgent::new(bin.clone(), "w1:p1".into(), Some("claude".into()), None).describe(),
             "claude in w1:p1"
         );
-        assert_eq!(HerdrAgent::new(bin, "w1:p1".into(), None).describe(), "w1:p1");
+        assert_eq!(HerdrAgent::new(bin.clone(), "w1:p1".into(), None, None).describe(), "w1:p1");
+        // A name is what a human recognises, so it replaces the pane id wherever it is known.
+        assert_eq!(
+            HerdrAgent::new(bin.clone(), "w1:p1".into(), Some("pi".into()), Some("plannator".into()))
+                .describe(),
+            "pi in plannator"
+        );
+        assert_eq!(
+            HerdrAgent::new(bin, "w1:p1".into(), None, Some("plannator".into())).describe(),
+            "plannator"
+        );
     }
 
     #[cfg(windows)]
@@ -222,7 +236,9 @@ mod tests {
             .expect("run rustc");
         assert!(output.status.success(), "rustc failed: {}", String::from_utf8_lossy(&output.stderr));
         let feedback = "line one\n\"quoted\" 100% & ready | café 中文";
-        HerdrAgent::new(fake, "w1:p1".into(), Some("codex".into())).deliver(feedback).expect("delivered");
+        HerdrAgent::new(fake, "w1:p1".into(), Some("codex".into()), None)
+            .deliver(feedback)
+            .expect("delivered");
         let log = std::fs::read_to_string(root.join("calls.jsonl")).expect("call log");
         let call: serde_json::Value = serde_json::from_str(log.trim()).expect("JSON call");
         assert_eq!(call["argv"], serde_json::json!(["agent", "prompt", "w1:p1", feedback]));

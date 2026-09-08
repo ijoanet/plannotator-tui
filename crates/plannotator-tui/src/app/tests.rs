@@ -87,7 +87,12 @@ fn a_message_review_without_a_session_id_archives_only_the_transcript_path() {
 }
 
 fn agent() -> Box<dyn Delivery> {
-    Box::new(HerdrAgent::new(PathBuf::from("/nonexistent/herdr"), "w1:p1".into(), Some("claude".into())))
+    Box::new(HerdrAgent::new(
+        PathBuf::from("/nonexistent/herdr"),
+        "w1:p1".into(),
+        Some("claude".into()),
+        None,
+    ))
 }
 
 /// One frame, as one string per screen row.

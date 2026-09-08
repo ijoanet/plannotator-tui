@@ -67,5 +67,6 @@ per run, not once per fence (22 ms for the same file).
 - Images render as half-blocks and need truecolor; remote images are never fetched.
 - Obsidian `![[image.png]]` embeds render only with `[image] obsidian_embeds`; note
   transclusions are not followed.
-- Every color is a `[theme]` token; diagram spans follow pi's mapping of the `grok-mermaid`
+- Every color is a `[theme]` token, and badges derive a readable foreground from their fill;
+  diagram spans follow pi's mapping of the `grok-mermaid`
   classes, so a diagram can be made to look the same as in the agent that wrote it.

@@ -102,16 +102,37 @@ impl HerdrEnv {
         self.session.is_some() || self.session_id.is_some() || self.message_pid.is_some()
     }
 
-    /// Ask Herdr which agent runs in `pane` (`herdr pane get`), for the label when the
-    /// launcher only knew the pane id. One short process at startup; `None` on any failure.
-    pub(crate) fn agent_in_pane(&self, pane: &str) -> Option<String> {
+    /// Ask Herdr what to call `pane`: its own label if it has one, else its tab's label
+    /// (`herdr pane get`, then `herdr tab get`). A pane id means nothing to a reader, and an
+    /// agent pane carries no label of its own in practice, so the tab's name is what a human
+    /// recognises. One or two short processes at startup; `None` on any failure.
+    pub(crate) fn pane_name(&self, pane: &str) -> Option<String> {
+        let pane = self.pane_json(&["pane", "get", pane])?;
+        let label = pane.pointer("/result/pane/label").and_then(|v| v.as_str());
+        if let Some(label) = label.filter(|l| !l.trim().is_empty()) {
+            return Some(label.to_owned());
+        }
+        let tab = pane.pointer("/result/pane/tab_id")?.as_str()?;
+        let tab = self.pane_json(&["tab", "get", tab])?;
+        let label = tab.pointer("/result/tab/label")?.as_str()?;
+        (!label.trim().is_empty()).then(|| label.to_owned())
+    }
+
+    /// Run a Herdr CLI command and parse its JSON envelope.
+    fn pane_json(&self, args: &[&str]) -> Option<serde_json::Value> {
         let output = std::process::Command::new(&self.bin)
-            .args(["pane", "get", pane])
+            .args(args)
             .stdin(std::process::Stdio::null())
             .output()
             .ok()
             .filter(|o| o.status.success())?;
-        let json: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+        serde_json::from_slice(&output.stdout).ok()
+    }
+
+    /// Ask Herdr which agent runs in `pane` (`herdr pane get`), for the label when the
+    /// launcher only knew the pane id. One short process at startup; `None` on any failure.
+    pub(crate) fn agent_in_pane(&self, pane: &str) -> Option<String> {
+        let json = self.pane_json(&["pane", "get", pane])?;
         json.pointer("/result/pane/agent")?.as_str().map(str::to_owned)
     }
 }

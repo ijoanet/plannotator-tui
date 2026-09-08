@@ -4,7 +4,7 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
 use unicode_width::UnicodeWidthStr;
 
@@ -31,9 +31,15 @@ impl App {
             SendState::Ready if self.send_count() == 0 => {
                 Style::new().fg(theme.muted).bg(theme.toolbar_bg).add_modifier(Modifier::DIM)
             }
-            SendState::Ready => Style::new().fg(Color::Black).bg(theme.send_bg).bold(),
-            SendState::Sent => Style::new().fg(Color::Black).bg(theme.approve_bg).bold(),
-            SendState::Blocked(_) => Style::new().fg(Color::Black).bg(theme.comment_bg).bold(),
+            SendState::Ready => {
+                Style::new().fg(crate::theme::readable_on(theme.send_bg)).bg(theme.send_bg).bold()
+            }
+            SendState::Sent => {
+                Style::new().fg(crate::theme::readable_on(theme.approve_bg)).bg(theme.approve_bg).bold()
+            }
+            SendState::Blocked(_) => {
+                Style::new().fg(crate::theme::readable_on(theme.comment_bg)).bg(theme.comment_bg).bold()
+            }
         }
     }
 }

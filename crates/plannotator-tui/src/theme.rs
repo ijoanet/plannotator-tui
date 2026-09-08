@@ -137,6 +137,26 @@ impl Theme {
     }
 }
 
+/// A foreground that stays legible on `background`.
+///
+/// The badges paint text on a themed fill, so a fixed foreground only works for the palette it
+/// was chosen against: black on the default green was already poor, and on a darker themed green
+/// it fell to 1.6:1. Relative luminance per WCAG, with the same 0.179 threshold browsers use,
+/// picks the better of black and white for any fill.
+pub(crate) fn readable_on(background: Color) -> Color {
+    let Color::Rgb(r, g, b) = background else {
+        // A named or indexed color has no channels to read; assume a dark terminal, where a
+        // light foreground is the safer default.
+        return Color::White;
+    };
+    let channel = |c: u8| {
+        let c = f64::from(c) / 255.0;
+        if c <= 0.039_28 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+    };
+    let luminance = 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+    if luminance > 0.179 { Color::Black } else { Color::White }
+}
+
 fn color(value: &str, key: &str, fallback: Color) -> Result<Color> {
     let value = value.trim();
     if value.is_empty() {
@@ -183,6 +203,16 @@ mod tests {
         let err = Theme::resolve(&config).expect_err("rejected");
         assert!(err.to_string().contains("theme.accent"), "{err}");
         assert!(err.to_string().contains("burnt siena"), "{err}");
+    }
+
+    #[test]
+    fn a_badge_foreground_is_chosen_for_contrast_against_its_fill() {
+        // The regression this exists for: black on a dark themed green was 1.6:1.
+        assert_eq!(readable_on(Color::Rgb(0x0b, 0x3a, 0x20)), Color::White);
+        assert_eq!(readable_on(Color::Rgb(0xff, 0xff, 0xff)), Color::Black);
+        assert_eq!(readable_on(Color::Rgb(0xc9, 0xd3, 0x64)), Color::Black, "a bright yellow fill");
+        // Channels unknown: assume a dark terminal.
+        assert_eq!(readable_on(Color::Indexed(22)), Color::White);
     }
 
     #[test]
