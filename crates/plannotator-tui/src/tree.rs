@@ -87,6 +87,23 @@ impl Tree {
         Ok(Self { root: root.to_path_buf(), rows: list(root, 0)? })
     }
 
+    /// A flat tree of exactly these files, for a set presented together rather than a folder.
+    ///
+    /// Rows are named by their path relative to `root`, so two files with the same basename in
+    /// different directories stay distinguishable. No directory rows: there is nothing to
+    /// expand, and everything in the list is already meant to be here.
+    pub(crate) fn of_files(root: &Path, files: &[PathBuf]) -> Self {
+        let mut rows: Vec<Row> = files
+            .iter()
+            .map(|path| {
+                let name = path.strip_prefix(root).unwrap_or(path).to_string_lossy().into_owned();
+                Row { path: path.clone(), name, depth: 0, is_dir: false, expanded: false, annotations: 0 }
+            })
+            .collect();
+        rows.sort_by(|a, b| a.name.cmp(&b.name));
+        Self { root: root.to_path_buf(), rows }
+    }
+
     pub(crate) fn root(&self) -> &Path {
         &self.root
     }

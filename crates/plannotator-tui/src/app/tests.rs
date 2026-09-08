@@ -421,3 +421,51 @@ fn the_rail_costs_no_width_until_an_annotation_exists() {
     assert!(marked < unmarked, "the rail appears with the first annotation: {marked} < {unmarked}");
     assert!(marked >= 20, "the document keeps its minimum width");
 }
+
+/// Two documents in different directories, presented together.
+fn set_app() -> (PathBuf, App) {
+    let root = std::env::temp_dir().join(format!("plannotator-tui-set-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("one")).expect("dir");
+    std::fs::create_dir_all(root.join("two")).expect("dir");
+    std::fs::write(root.join("one/doc.md"), "# One\n\nalpha\n").expect("write");
+    std::fs::write(root.join("two/doc.md"), "# Two\n\nbeta\n").expect("write");
+    let files = vec![root.join("one/doc.md"), root.join("two/doc.md")];
+    let mut app = App::open_files(&files, &root, 80, Box::new(Discard), RenderSettings::text_only())
+        .expect("opens the set");
+    app.data_dir = scratch_data_dir();
+    (root, app)
+}
+
+#[test]
+fn a_presented_set_lists_exactly_its_documents_by_relative_name() {
+    let (_root, app) = set_app();
+    let tree = app.tree.as_ref().expect("a tree");
+    let names: Vec<&str> = tree.rows.iter().map(|r| r.name.as_str()).collect();
+    // Same basename in both directories: the relative path keeps them apart.
+    assert_eq!(names, ["one/doc.md", "two/doc.md"]);
+    assert!(tree.rows.iter().all(|r| !r.is_dir), "a set has no directories to expand");
+}
+
+#[test]
+fn shift_tab_walks_the_documents_and_wraps() {
+    let (_root, mut app) = set_app();
+    let opened = |app: &App| match &app.open.source.provenance {
+        Provenance::File { path } => path.clone(),
+        _ => PathBuf::new(),
+    };
+    let first = opened(&app);
+    app.handle_event(&key(KeyCode::BackTab, KeyModifiers::SHIFT)).expect("cycles");
+    let second = opened(&app);
+    assert_ne!(first, second, "shift-tab opened the other document");
+    app.handle_event(&key(KeyCode::BackTab, KeyModifiers::SHIFT)).expect("cycles");
+    assert_eq!(opened(&app), first, "cycling wraps back to the first");
+}
+
+#[test]
+fn cycling_one_document_is_a_no_op() {
+    let mut app = app(Box::new(Discard));
+    let before = app.open.doc.source.clone();
+    app.cycle_document().expect("no-op");
+    assert_eq!(app.open.doc.source, before);
+}

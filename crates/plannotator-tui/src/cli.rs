@@ -136,6 +136,12 @@ pub(crate) fn run(args: &[String]) -> Result<()> {
         Some("herdr") => herdr_command(args.get(1..).unwrap_or_default()),
         Some("last") => last_command(args.get(1..).unwrap_or_default()),
         Some(flag) if flag.starts_with("--") => anyhow::bail!("unknown flag {flag}\n{USAGE}"),
+        // Several paths: documents presented together, cycled with Shift-Tab.
+        Some(_) if args.len() > 1 && args.iter().all(|a| !a.starts_with("--")) => {
+            let paths: Vec<PathBuf> =
+                args.iter().map(|a| crate::workspace_paths::absolute(Path::new(a))).collect();
+            interactive_set(&paths)
+        }
         Some(_) => interactive(&path(0)?),
         None => anyhow::bail!(USAGE),
     }
@@ -251,6 +257,37 @@ fn last_command(args: &[String]) -> Result<()> {
 
 fn interactive(path: &PathBuf) -> Result<()> {
     run_ui(|width| open_app(path, width, true))
+}
+
+/// Several documents in one pane. Their common directory names the project, so a file's
+/// annotations are stored the same way as when it is opened on its own.
+fn interactive_set(paths: &[PathBuf]) -> Result<()> {
+    for path in paths {
+        anyhow::ensure!(path.is_file(), "not a file: {}", path.display());
+    }
+    let root = common_directory(paths);
+    run_ui(move |width| App::open_files(paths, &root, width, delivery(true), render_settings()?))
+}
+
+/// The deepest directory containing every path, compared per component so `/a/bc` and `/a/bd`
+/// never share `/a/b`.
+fn common_directory(paths: &[PathBuf]) -> PathBuf {
+    let mut common: Option<PathBuf> = None;
+    for path in paths {
+        let dir = path.parent().unwrap_or(Path::new("/")).to_path_buf();
+        common = Some(match common {
+            None => dir,
+            Some(mut current) => {
+                while !dir.starts_with(&current) {
+                    if !current.pop() {
+                        break;
+                    }
+                }
+                current
+            }
+        });
+    }
+    common.unwrap_or_else(|| PathBuf::from("/"))
 }
 
 /// Own the terminal for one app: `build` gets the document width the screen allows.

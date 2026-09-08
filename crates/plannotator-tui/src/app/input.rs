@@ -44,6 +44,9 @@ impl App {
                 self.cycle_focus();
                 return Ok(());
             }
+            // Shift-Tab walks the documents themselves, where Tab walks the panes of one
+            // document. With several presented together that is the movement wanted most.
+            (KeyCode::BackTab, _) => return self.cycle_document(),
             (KeyCode::Char('E'), _) => return self.send_feedback(),
             (KeyCode::Char('t'), _) => {
                 self.toggle_tree(self.geometry.doc.width + self.geometry.tree.width + GUTTER);

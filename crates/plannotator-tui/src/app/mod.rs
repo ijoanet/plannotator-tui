@@ -278,6 +278,63 @@ impl App {
         Ok(app)
     }
 
+    /// Documents presented together: a flat tree of exactly these files, the first one open.
+    ///
+    /// `root` is their common directory and names the project, exactly as folder mode does, so
+    /// annotations are keyed the same way whether a file is reached from here or from a folder.
+    pub(crate) fn open_files(
+        files: &[PathBuf],
+        root: &Path,
+        width: usize,
+        delivery: Box<dyn Delivery>,
+        render: RenderSettings,
+    ) -> Result<Self> {
+        let first = files.first().context("no document to open")?;
+        let mut app = Self::open(read_file(first)?, width, delivery, render)?;
+        app.project = workspace_paths::project_name(root);
+        app.open = Open::new(read_file(first)?, width, &app.data_dir, &app.project, &app.render)?;
+        let mut tree = Tree::of_files(root, files);
+        app.derive_send_state();
+        app.refresh_counts(&mut tree);
+        app.tree_cursor = tree.position(first).unwrap_or(0);
+        app.tree = Some(tree);
+        Ok(app)
+    }
+
+    /// Open the next document in the tree after the one on screen, wrapping. Directory rows are
+    /// skipped: this walks documents, not the tree's shape.
+    pub(crate) fn cycle_document(&mut self) -> Result<()> {
+        let files: Vec<PathBuf> = match &self.tree {
+            Some(tree) => tree.rows.iter().filter(|r| !r.is_dir).map(|r| r.path.clone()).collect(),
+            None => return Ok(()),
+        };
+        if files.len() < 2 {
+            return Ok(());
+        }
+        let current = match &self.open.source.provenance {
+            Provenance::File { path } => files.iter().position(|p| p == path),
+            _ => None,
+        };
+        let next = current.map_or(0, |i| (i + 1) % files.len());
+        let Some(path) = files.get(next).cloned() else { return Ok(()) };
+        let width = self.open.layout.width;
+        self.open = Open::new(read_file(&path)?, width, &self.data_dir, &self.project, &self.render)?;
+        self.derive_send_state();
+        if let Some(tree) = &self.tree
+            && let Some(row) = tree.position(&path)
+        {
+            self.tree_cursor = row;
+        }
+        self.focus = Focus::Document;
+        self.scroll = 0;
+        self.selected = 0;
+        self.clear_selection();
+        let name =
+            path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+        self.status = Some(format!("{name} ({}/{})", next + 1, files.len()));
+        Ok(())
+    }
+
     /// Recompute the tree's annotation counts from the records on disk.
     fn refresh_counts(&self, tree: &mut Tree) {
         let (data_dir, project) = (self.data_dir.clone(), self.project.clone());
