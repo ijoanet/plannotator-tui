@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 
-use super::{App, Mode};
+use super::{App, Mode, Open, read_file};
 use crate::delivery::{Clipboard, Delivery as _, DeliveryError};
 use crate::store::Store;
 use plannotator_tui_schema::{Kind, Provenance};
@@ -27,9 +27,16 @@ impl App {
         match self.delivery.deliver(&text) {
             Ok(()) => {
                 self.record_delivery(&target)?;
-                self.archive_submission(&text);
+                // The store is the recovery copy when the archive cannot write, so a file is only
+                // cleared once its feedback is durable somewhere else.
+                let archived = self.archive_submission(&text);
+                let cleared = if archived { self.clear_sent()? } else { 0 };
                 self.send_state = SendState::Sent;
-                self.status = Some(format!("sent {count} annotation(s) → {target}"));
+                self.status = Some(match (cleared, archived) {
+                    (0, false) => format!("sent {count} annotation(s) → {target} · kept, not archived"),
+                    (0, true) => format!("sent {count} annotation(s) → {target}"),
+                    (n, _) => format!("sent {count} annotation(s) → {target} · cleared {n}"),
+                });
             }
             Err(DeliveryError::Blocked(msg)) => {
                 self.copy_fallback(&text);
@@ -57,10 +64,11 @@ impl App {
     /// Record the submission in the shared feedback archive (contract: Plannotator's
     /// `feedback-archive.ts` v1). Never fails the send; the annotation store is the
     /// recovery copy when archiving cannot write.
-    fn archive_submission(&self, feedback: &str) {
+    /// Returns whether the submission was written, which is what makes clearing safe.
+    fn archive_submission(&self, feedback: &str) -> bool {
         use crate::archive::{self, Submission, Target};
         if !archive::enabled(|key| std::env::var(key).ok(), &self.data_dir) {
-            return;
+            return false;
         }
         let (surface, target, annotations) = if let Some(tree) = &self.tree {
             // A folder session submits one body of feedback for the whole session;
@@ -93,7 +101,41 @@ impl App {
             annotations,
             count: self.send_count(),
             now_ms: None,
-        });
+        })
+        .is_some()
+    }
+
+    /// Clear what the send just covered: the open file's annotations, and in folder mode every
+    /// other annotated file's too, mirroring `record_delivery`.
+    ///
+    /// A review that has been handed over and archived has done its job; leaving it behind made
+    /// every later send repeat it, so an agent received items it had already acted on.
+    fn clear_sent(&mut self) -> Result<usize> {
+        if !self.render.review.clear_on_send {
+            return Ok(0);
+        }
+        let mut cleared = 0usize;
+        if self.tree.is_none() {
+            cleared += self.open.store.remove_placed()?;
+        } else {
+            let width = self.open.layout.width;
+            for path in self.annotated_files() {
+                if self.is_open(&path) {
+                    cleared += self.open.store.remove_placed()?;
+                } else {
+                    let mut open =
+                        Open::new(read_file(&path)?, width, &self.data_dir, &self.project, &self.render)?;
+                    cleared += open.store.remove_placed()?;
+                }
+            }
+        }
+        self.rail_cursor = 0;
+        self.clear_selection();
+        if let Some(mut tree) = self.tree.take() {
+            self.refresh_counts(&mut tree);
+            self.tree = Some(tree);
+        }
+        Ok(cleared)
     }
 
     fn annotation_records(store: &Store) -> Vec<crate::archive::AnnotationRecord> {

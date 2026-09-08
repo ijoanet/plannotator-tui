@@ -17,7 +17,23 @@ pub(crate) struct Config {
     pub(crate) herdr: HerdrConfig,
     pub(crate) mermaid: MermaidConfig,
     pub(crate) image: ImageConfig,
+    pub(crate) review: ReviewConfig,
     pub(crate) theme: crate::theme::ThemeConfig,
+}
+
+/// How a review behaves once it has been handed over.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub(crate) struct ReviewConfig {
+    /// Clear a file's annotations once they have been sent *and* archived, so the next send
+    /// carries only what is new. The archive keeps what was sent.
+    pub(crate) clear_on_send: bool,
+}
+
+impl Default for ReviewConfig {
+    fn default() -> Self {
+        Self { clear_on_send: true }
+    }
 }
 
 impl Config {

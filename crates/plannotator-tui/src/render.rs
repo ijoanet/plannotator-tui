@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::config::ArtConfig;
+use crate::config::{ArtConfig, ReviewConfig};
 use crate::theme::Theme;
 
 /// Rendering settings for the process, applied to every document opened.
@@ -14,6 +14,7 @@ use crate::theme::Theme;
 pub(crate) struct RenderSettings {
     pub(crate) art: ArtConfig,
     pub(crate) theme: Theme,
+    pub(crate) review: ReviewConfig,
 }
 
 impl RenderSettings {
@@ -25,7 +26,7 @@ impl RenderSettings {
     /// Art disabled entirely, default palette: what a test wants unless it says otherwise.
     #[cfg(test)]
     pub(crate) fn text_only() -> Self {
-        Self { art: ArtConfig::disabled(), theme: Theme::default() }
+        Self { art: ArtConfig::disabled(), theme: Theme::default(), review: ReviewConfig::default() }
     }
 }
 

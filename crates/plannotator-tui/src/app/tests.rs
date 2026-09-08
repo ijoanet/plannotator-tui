@@ -470,3 +470,42 @@ fn cycling_one_document_is_a_no_op() {
     app.cycle_document().expect("no-op");
     assert_eq!(app.open.doc.source, before);
 }
+
+#[test]
+fn a_sent_and_archived_review_is_cleared_so_the_next_send_repeats_nothing() {
+    let mut app = app(Box::new(Discard));
+    app.add_block_annotation(0, Kind::Comment, "fix this".to_owned()).expect("annotation");
+    assert_eq!(app.send_count(), 1);
+
+    app.send_feedback().expect("sends");
+    assert_eq!(app.send_state, SendState::Sent);
+    assert!(app.data_dir.join("feedback").join(&app.project).join("index.jsonl").is_file());
+    assert_eq!(app.send_count(), 0, "the review was handed over, so it is no longer pending");
+    assert!(app.feedback().is_empty() || !app.feedback().contains("fix this"), "and not re-sent");
+}
+
+#[test]
+fn a_review_that_could_not_be_archived_is_kept() {
+    let mut app = app(Box::new(Discard));
+    // The archive is the durable copy; with it off, the store is the only record and must stay.
+    std::fs::write(app.data_dir.join("config.json"), r#"{"feedbackHistory": false}"#).expect("archive off");
+    app.add_block_annotation(0, Kind::Comment, "keep me".to_owned()).expect("annotation");
+    app.send_feedback().expect("sends");
+    assert_eq!(app.send_count(), 1, "nothing archived it, so nothing may clear it");
+    assert!(app.feedback().contains("keep me"));
+}
+
+#[test]
+fn clearing_on_send_can_be_turned_off() {
+    let source =
+        DocumentSource::new("# Plan\n\nfirst thing\n".to_owned(), "plan.md", true, Provenance::Stdin);
+    let render = RenderSettings {
+        review: crate::config::ReviewConfig { clear_on_send: false },
+        ..RenderSettings::text_only()
+    };
+    let mut app = App::open(source, 60, Box::new(Discard), render).expect("app opens");
+    app.data_dir = scratch_data_dir();
+    app.add_block_annotation(0, Kind::Comment, "stay".to_owned()).expect("annotation");
+    app.send_feedback().expect("sends");
+    assert_eq!(app.send_count(), 1, "the annotation stays when the flag is off");
+}

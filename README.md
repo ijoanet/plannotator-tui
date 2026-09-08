@@ -108,6 +108,19 @@ stays `[img] alt` — neither is an error. Images are read from disk only: a rem
 image is never fetched. Local `png`, `jpeg`, `gif` and `webp` are supported; pictures need a
 truecolor terminal.
 
+## After a send
+
+A successful Send or Copy clears that file's annotations, so the next one carries only what is
+new - an agent acting on a review should not receive the same comment twice. Nothing is lost: the
+feedback archive below already holds what was sent. Clearing only happens once the archive has
+written, so with history off a send keeps everything and the status line says so. To keep them
+regardless:
+
+```toml
+[review]
+clear_on_send = false
+```
+
 ## Colors
 
 Every color is a named token in `[theme]`. A value is anything `ratatui` parses — `#41464e`,

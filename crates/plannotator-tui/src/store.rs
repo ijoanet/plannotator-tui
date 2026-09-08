@@ -245,6 +245,26 @@ impl Store {
         Ok(ids.len())
     }
 
+    /// Remove every annotation that resolves into the document, keeping orphans.
+    ///
+    /// What a send covers, and so what a send can clear. An orphan was not in the feedback -
+    /// its quote no longer exists in the file - so clearing it would discard something nobody
+    /// has seen.
+    pub(crate) fn remove_placed(&mut self) -> Result<usize> {
+        let ids: Vec<String> = self
+            .annotations
+            .iter()
+            .zip(&self.resolved)
+            .filter(|(_, r)| matches!(r, Resolution::Range(_)))
+            .map(|(a, _)| a.id.clone())
+            .collect();
+        for id in &ids {
+            self.remove_unsaved(id);
+        }
+        self.save()?;
+        Ok(ids.len())
+    }
+
     pub(crate) fn remove(&mut self, id: &str) -> Result<bool> {
         let removed = self.remove_unsaved(id);
         self.save()?;

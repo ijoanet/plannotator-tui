@@ -484,3 +484,27 @@ out not to help directly: an agent pane carries **no label of its own** (`pane g
 (plugin panes set one) → tab label → pane id, costing one extra `herdr tab get` at startup and only
 when the pane is unlabelled. `HerdrAgent` carries the name beside the pane, because delivery still
 addresses the pane — the name is only ever what the human is told.
+
+## 19. A sent review is cleared, once it is archived (2026-09-08)
+
+Decision 13 recorded the send so the button could say "Sent" after a restart. It left the
+annotations in place, which made every later send carry them again: an agent that had already
+acted on a comment received it a second time, and a third. Reported from use - two items in one
+review had been implemented before they arrived.
+
+So a successful send clears what it covered. The annotations are not lost: `archive.rs` has
+already written the feedback text, the quoted selections and their bodies to
+`{data_dir}/feedback/<project>/index.jsonl` with a Markdown copy under `records/`, which is the
+durable record and is shared with the Plannotator web app.
+
+The order matters and is the whole safety argument. `archive_submission` reports whether it
+wrote, and nothing is cleared unless it did, because `send.rs` already said the annotation store
+is the recovery copy when the archive cannot write. With the archive off
+(`PLANNOTATOR_FEEDBACK_HISTORY=0`) a send therefore keeps everything and says so in the status
+line. A refused or failed delivery clears nothing either, matching what archiving already did.
+
+Only *placed* annotations are cleared. An orphan - one whose quote no longer exists in the file -
+was never in the feedback, so clearing it would discard something nobody has read.
+
+`[review] clear_on_send` turns it off, because this is a divergence from decision 13 rather than a
+correction of it: someone who wants the reviewer to keep showing what was sent can have that.
