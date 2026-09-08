@@ -10,6 +10,7 @@
 
 mod image;
 mod mermaid;
+mod obsidian;
 
 use std::collections::HashMap;
 
@@ -46,10 +47,11 @@ pub(crate) fn render_all(doc: &Document, width: usize, ctx: &RenderContext) -> H
     let mut art = HashMap::new();
 
     if ctx.art.image.enabled {
-        let paragraphs = blocks_of_kind(doc, BlockKind::Paragraph);
-        for (index, source) in paragraphs {
-            let Some(url) = single_image_url(source) else { continue };
-            let Some(image) = image::load(&url, &ctx.base_dir, &ctx.art.image) else { continue };
+        // The vault index is built at most once per document, and only if an embed needs it.
+        let mut vault: Option<obsidian::Vault> = None;
+        for (index, source) in blocks_of_kind(doc, BlockKind::Paragraph) {
+            let Some(path) = image_path(source, ctx, &mut vault) else { continue };
+            let Some(image) = image::load(&path, &ctx.art.image) else { continue };
             let text = image.to_text(width);
             art.insert(index, Art { text, source: ArtSource::Image(image) });
         }
@@ -69,6 +71,22 @@ pub(crate) fn render_all(doc: &Document, width: usize, ctx: &RenderContext) -> H
     }
 
     art
+}
+
+/// The image file a paragraph shows, whether written as Markdown or as an Obsidian embed.
+fn image_path(
+    source: &str,
+    ctx: &RenderContext,
+    vault: &mut Option<obsidian::Vault>,
+) -> Option<std::path::PathBuf> {
+    if let Some(url) = single_image_url(source) {
+        return image::local_path(&url, &ctx.base_dir);
+    }
+    if !ctx.art.image.obsidian_embeds {
+        return None;
+    }
+    let target = obsidian::embed_target(source)?;
+    vault.get_or_insert_with(|| obsidian::Vault::around(&ctx.base_dir)).resolve(target, &ctx.base_dir)
 }
 
 /// Index and source text of every block of `kind`.

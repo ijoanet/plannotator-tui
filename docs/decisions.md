@@ -436,3 +436,31 @@ inherited: edges were `Blue` while focused borders were `Cyan`, and edge labels 
 
 `--snapshot`'s mark map now reads the resolved theme instead of literals, so a themed run still
 reports which annotation covers each cell.
+
+## 18. Obsidian embeds are parsed by hand, behind a flag (2026-09-08)
+
+`AGENTS.md` says we never interpret markdown ourselves, and every other detection in this crate
+obeys it: the mermaid fence's info string and the image destination both come from
+`pulldown-cmark`'s event stream. `![[image.png]]` cannot. It is not Markdown — it is Obsidian's
+own wiki-embed — so `pulldown-cmark` correctly returns it as plain text and no amount of walking
+the event stream will find it. Vaults written in Obsidian use this form for *every* attachment,
+which made it the one syntax the image renderer could not see.
+
+So `art/obsidian.rs` parses it directly, and that is the only sanctioned exception to the rule.
+It is contained: one function that accepts a paragraph which is exactly one embed (the same
+"nothing else in the paragraph" test the Markdown form uses), and rejects anything with a stray
+bracket, a line break or a second embed.
+
+It is **off by default** (`[image] obsidian_embeds`). A CommonMark document that happens to
+contain `![[x]]` means nothing by it and must not grow a picture; only someone who knows their
+document is a vault note turns it on.
+
+Resolution follows Obsidian, not the filesystem: relative to the note, then from the vault root
+(nearest ancestor holding `.obsidian`), then **by bare filename anywhere in the vault**, which
+is Obsidian's shortest-path form and the reason a filename index exists at all. The index is
+built at most once per document and only when a document actually contains an embed, bounded at
+20k entries and skipping hidden directories, `node_modules`, `target` and `.git`. First match
+wins, so a change in walk order cannot flip which of two same-named files is chosen.
+
+Only decodable extensions resolve. `![[note.md]]` is a transclusion, not a picture; rendering it
+as one would be a lie, and following it is a different feature.

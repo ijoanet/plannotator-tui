@@ -108,11 +108,14 @@ pub(crate) struct ImageConfig {
     pub(crate) enabled: bool,
     /// Tallest an image may render, in terminal rows.
     pub(crate) max_rows: usize,
+    /// Also render Obsidian's `![[image.png]]`, which is not Markdown. Off by default: a
+    /// `CommonMark` document that happens to contain `![[x]]` means nothing by it.
+    pub(crate) obsidian_embeds: bool,
 }
 
 impl Default for ImageConfig {
     fn default() -> Self {
-        Self { enabled: true, max_rows: 20 }
+        Self { enabled: true, max_rows: 20, obsidian_embeds: false }
     }
 }
 

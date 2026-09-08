@@ -53,19 +53,18 @@ impl fmt::Debug for ImageArt {
     }
 }
 
-/// Load the image at `url` (a path relative to `base_dir`), or `None` if it is not a local
-/// file we can decode.
-pub(super) fn load(url: &str, base_dir: &Path, config: &ImageConfig) -> Option<ImageArt> {
-    let path = local_path(url, base_dir)?;
-    // A missing or undecodable image is not an error: the block keeps its markdown rendering.
-    decode(&path, config.max_rows).ok()
+/// Load the image at `path`, or `None` if it cannot be decoded.
+///
+/// A missing or undecodable image is not an error: the block keeps its markdown rendering.
+pub(super) fn load(path: &Path, config: &ImageConfig) -> Option<ImageArt> {
+    decode(path, config.max_rows).ok()
 }
 
 /// The file a markdown destination points at, or `None` for anything not on this disk.
 ///
 /// Remote images are skipped rather than fetched: the app has no business making network
 /// requests while rendering a document.
-fn local_path(url: &str, base_dir: &Path) -> Option<PathBuf> {
+pub(super) fn local_path(url: &str, base_dir: &Path) -> Option<PathBuf> {
     let url = url.trim();
     if url.is_empty() {
         return None;

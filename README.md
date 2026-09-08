@@ -89,6 +89,19 @@ enabled = true
 max_rows = 20      # tallest a picture may render
 ```
 
+In an Obsidian vault, attachments are written `![[image.png]]`, which is not Markdown —
+`pulldown-cmark` hands it back as text, so it is parsed separately and stays behind a flag:
+
+```toml
+[image]
+obsidian_embeds = true
+```
+
+Targets resolve the way Obsidian resolves them: relative to the note, then from the vault root
+(the nearest ancestor holding `.obsidian`), then by bare filename anywhere in the vault. A
+`|300` size or `|caption` alias is accepted and ignored, since width here is measured in
+columns. `![[note.md]]` transclusions are left as text.
+
 `PLANNOTATOR_MERMAID_BASE` and `PLANNOTATOR_MERMAID_NODE` override the first two. Without
 Node or `grok-mermaid` a fence stays an ordinary code block, and an image that cannot be read
 stays `[img] alt` — neither is an error. Images are read from disk only: a remote `https://`

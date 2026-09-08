@@ -29,6 +29,10 @@ a hang all fall back to the plain code block. Detection still goes through `pull
 (the fence's info string, the image destination), never string matching on markup. See
 `docs/decisions.md` 15 and 16.
 
+`src/art/obsidian.rs` is the **only** sanctioned exception to "we never interpret markdown
+ourselves", because `![[x.png]]` is not markdown and `pulldown-cmark` will never report it. It is
+off by default and must stay that way. Any other hand-parsing of markup is still a bug. Decision 18.
+
 ## Rules that are enforced (see `Cargo.toml` workspace lints)
 
 - `unsafe` is forbidden. `unwrap`/`expect`/`panic!`/`todo!` warn — production code returns
