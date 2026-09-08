@@ -4,6 +4,7 @@
 #![allow(clippy::expect_used, clippy::indexing_slicing, reason = "tests assert by panicking")]
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use plannotator_tui_schema::{DocumentSource, Kind, Provenance};
 use ratatui::Terminal;
@@ -16,12 +17,65 @@ use super::send::SendState;
 use super::{App, Mode};
 use crate::delivery::{Delivery, Discard, HerdrAgent};
 
+/// A fresh, empty data directory for one test. `App::open` resolves the real one, and a
+/// successful send archives into it, so every app under test is pointed here instead:
+/// nothing a test does may reach the developer's own Plannotator data.
+fn scratch_data_dir() -> PathBuf {
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("plannotator-tui-app-{}-{n}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("scratch data dir");
+    dir
+}
+
 /// A transient source: the app runs exactly as it does on a file, but nothing is written
 /// to the Plannotator data directory.
 fn app(delivery: Box<dyn Delivery>) -> App {
     let source =
         DocumentSource::new("# Plan\n\nfirst thing\n".to_owned(), "plan.md", true, Provenance::Stdin);
-    App::open(source, 60, delivery).expect("app opens")
+    let mut app = App::open(source, 60, delivery).expect("app opens");
+    app.data_dir = scratch_data_dir();
+    app
+}
+
+/// `App::open_message` on `candidates()`, isolated like `app`.
+fn message_app(session_id: Option<&str>, delivery: Box<dyn Delivery>) -> App {
+    let mut app =
+        App::open_message("claude", "/tmp/transcript.jsonl", session_id, candidates(), 60, delivery)
+            .expect("opens");
+    app.data_dir = scratch_data_dir();
+    app
+}
+
+/// Send the open message review through `Discard` and return the archive's one record.
+fn archived_message_review(app: &mut App) -> serde_json::Value {
+    app.handle_event(&Event::Key(KeyEvent::from(KeyCode::Esc))).expect("esc");
+    app.add_block_annotation(0, Kind::Comment, "x".to_owned()).expect("annotation");
+    app.send_feedback().expect("send");
+    assert_eq!(app.send_state, SendState::Sent);
+    let index = app.data_dir.join("feedback").join(&app.project).join("index.jsonl");
+    let text = std::fs::read_to_string(&index).expect("index written under the test's data dir");
+    serde_json::from_str(text.trim()).expect("one json record")
+}
+
+#[test]
+fn a_message_review_archives_the_session_id_and_the_transcript_path_separately() {
+    let id = "01a04583-a848-7b21-a890-f3ed0c9fef05";
+    let mut app = message_app(Some(id), Box::new(Discard));
+    let record = archived_message_review(&mut app);
+    assert_eq!(record["surface"], "annotate-last");
+    assert_eq!(record["target"]["agent"]["host"], "claude-code");
+    assert_eq!(record["target"]["agent"]["session"], id);
+    assert_eq!(record["target"]["agent"]["transcript"], "/tmp/transcript.jsonl");
+}
+
+#[test]
+fn a_message_review_without_a_session_id_archives_only_the_transcript_path() {
+    let mut app = message_app(None, Box::new(Discard));
+    let record = archived_message_review(&mut app);
+    assert!(record["target"]["agent"].get("session").is_none(), "no id means no session, never the path");
+    assert_eq!(record["target"]["agent"]["transcript"], "/tmp/transcript.jsonl");
 }
 
 fn agent() -> Box<dyn Delivery> {
@@ -73,6 +127,8 @@ fn clicking_the_send_button_sends() {
     });
     app.handle_event(&click).expect("click");
     assert_eq!(app.send_state, SendState::Sent);
+    let index = app.data_dir.join("feedback").join(&app.project).join("index.jsonl");
+    assert!(index.is_file(), "the send was archived under the test's own data dir");
 }
 
 #[test]
@@ -107,8 +163,7 @@ fn candidates() -> Vec<plannotator_tui_hosts::Message> {
 
 #[test]
 fn the_picker_lists_newest_first_and_opens_the_chosen_message() {
-    let mut app = App::open_message("claude", "/tmp/transcript.jsonl", candidates(), 60, Box::new(Discard))
-        .expect("opens");
+    let mut app = message_app(None, Box::new(Discard));
     app.clock_offset = 0;
     assert_eq!(app.mode, Mode::Pick, "more than one candidate asks which");
     let rows = draw(&mut app);
@@ -128,8 +183,7 @@ fn the_picker_lists_newest_first_and_opens_the_chosen_message() {
 
 #[test]
 fn a_status_leads_the_footer_so_a_narrow_pane_cannot_truncate_it_away() {
-    let mut app = App::open_message("claude", "/tmp/transcript.jsonl", candidates(), 60, Box::new(Discard))
-        .expect("opens");
+    let mut app = message_app(None, Box::new(Discard));
     app.handle_event(&Event::Key(KeyEvent::from(KeyCode::Esc))).expect("esc");
     app.set_status("no session id from Herdr, showing the newest transcript for this folder".to_owned());
     let rows = draw(&mut app);
@@ -139,8 +193,7 @@ fn a_status_leads_the_footer_so_a_narrow_pane_cannot_truncate_it_away() {
 
 #[test]
 fn escaping_the_picker_keeps_the_newest_message() {
-    let mut app = App::open_message("claude", "/tmp/transcript.jsonl", candidates(), 60, Box::new(Discard))
-        .expect("opens");
+    let mut app = message_app(None, Box::new(Discard));
     app.handle_event(&Event::Key(KeyEvent::from(KeyCode::Esc))).expect("esc");
     assert_eq!(app.mode, Mode::Browse);
     assert_eq!(app.open.doc.source, "# Third\n\nnewest message\n");
@@ -151,8 +204,7 @@ fn escaping_the_picker_keeps_the_newest_message() {
 
 #[test]
 fn moving_the_picker_cursor_previews_that_message() {
-    let mut app = App::open_message("claude", "/tmp/transcript.jsonl", candidates(), 60, Box::new(Discard))
-        .expect("opens");
+    let mut app = message_app(None, Box::new(Discard));
     assert_eq!(app.open.doc.source, "# Third\n\nnewest message\n", "the newest opens behind the picker");
 
     app.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('j')))).expect("j");
@@ -163,8 +215,7 @@ fn moving_the_picker_cursor_previews_that_message() {
 
 #[test]
 fn previewing_away_and_back_keeps_annotations() {
-    let mut app = App::open_message("claude", "/tmp/transcript.jsonl", candidates(), 60, Box::new(Discard))
-        .expect("opens");
+    let mut app = message_app(None, Box::new(Discard));
     app.handle_event(&Event::Key(KeyEvent::from(KeyCode::Esc))).expect("esc");
     app.add_block_annotation(0, Kind::Comment, "keep me".to_owned()).expect("annotate");
     assert_eq!(app.open.store.placed().len(), 1);
@@ -214,6 +265,7 @@ fn open_path(app: &App) -> String {
 fn the_tree_scrolls_to_keep_the_cursor_visible_and_hit_tests_through_the_offset() {
     let root = folder(30);
     let mut app = App::open_folder(&root, 100, Box::new(Discard)).expect("folder opens");
+    app.data_dir = scratch_data_dir();
     // 140 columns shows the tree; 20 rows leaves 18 for the body (header + footer).
     draw_sized(&mut app, 140, 20);
     app.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab))).expect("tab");
