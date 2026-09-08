@@ -60,7 +60,9 @@ pub(crate) struct RenderedBlock {
     art: Option<ArtSource>,
     /// Widest rendered line, which is what decides whether the block fits.
     intrinsic_width: usize,
-    /// A table's own Markdown, for when the rendered table is wider than the pane.
+    /// A table's own Markdown and where it starts, to re-render it narrow at any width.
+    table_source: Option<(String, usize)>,
+    /// The narrow rendering for the current width, when `showing_source`.
     source_view: Option<(Text<'static>, Vec<LineOffsets>)>,
     /// Set during reflow when `source_view` is what the current width shows.
     showing_source: bool,
@@ -86,26 +88,6 @@ impl RenderedBlock {
     }
 }
 
-/// Text and offsets for a block's own Markdown, where every character maps to its source byte.
-///
-/// A wide table falls back to this. `tui-markdown` sizes a table's columns from its content with
-/// no notion of the space available, so a table wider than the pane was clipped: the right border
-/// and the tail of every row were dropped, silently, and no clipped cell could be selected. The
-/// source keeps every character and, being the source, maps to it exactly.
-fn source_view(doc: &Document, index: usize) -> (Text<'static>, Vec<LineOffsets>) {
-    let source = doc.block_text(index);
-    let base = doc.blocks.get(index).map_or(0, |b| b.range.start);
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    let mut offsets: Vec<LineOffsets> = Vec::new();
-    let mut at = base;
-    for line in source.split('\n') {
-        offsets.push(line.char_indices().map(|(i, _)| Some(at + i)).collect());
-        lines.push(Line::from(line.to_owned()));
-        at += line.len() + 1; // the newline the split consumed
-    }
-    (Text::from(lines), offsets)
-}
-
 fn widest(text: &Text<'_>) -> usize {
     text.lines.iter().map(Line::width).max().unwrap_or(0)
 }
@@ -115,6 +97,8 @@ pub(crate) struct DocLayout {
     pub(crate) width: usize,
     pub(crate) blocks: Vec<RenderedBlock>,
     pub(crate) total_rows: usize,
+    /// Kept because a table too wide for the pane is re-rendered on resize, not at build.
+    theme: Theme,
 }
 
 /// Offsets for art: one `None` per rendered character, since no character came from the
@@ -168,7 +152,8 @@ impl DocLayout {
                 let intrinsic_width = widest(&text);
                 // Only a table can outgrow its pane in a way that loses content; code blocks are
                 // expected to be clipped and art has no smaller form.
-                let source_view = (block.kind == BlockKind::Table).then(|| source_view(doc, i));
+                let table_source = (block.kind == BlockKind::Table)
+                    .then(|| (doc.block_text(i).to_owned(), block.range.start));
                 RenderedBlock {
                     text,
                     offsets,
@@ -176,14 +161,15 @@ impl DocLayout {
                     range: block.range.clone(),
                     art,
                     intrinsic_width,
-                    source_view,
+                    table_source,
+                    source_view: None,
                     showing_source: false,
                     rows: Vec::new(),
                     first_row: 0,
                 }
             })
             .collect();
-        let mut layout = Self { width: 0, blocks, total_rows: 0 };
+        let mut layout = Self { width: 0, blocks, total_rows: 0, theme: ctx.theme };
         layout.reflow(width);
         layout
     }
@@ -195,6 +181,7 @@ impl DocLayout {
     pub(crate) fn reflow(&mut self, width: usize) {
         let width = width.max(1);
         let resample = width != self.width;
+        let theme = self.theme;
         self.width = width;
         let mut row = 0usize;
         for block in &mut self.blocks {
@@ -203,7 +190,18 @@ impl DocLayout {
                 block.text = art.to_text(width);
                 block.offsets = art_offsets(&block.text);
             }
-            block.showing_source = block.source_view.is_some() && block.intrinsic_width > width;
+            // A table wider than the pane is re-rendered as records for this width. Cheap: only
+            // tables that do not fit, only when the width changes.
+            if block.intrinsic_width > width
+                && let Some((source, base)) = &block.table_source
+            {
+                if resample || block.source_view.is_none() {
+                    block.source_view = crate::table::render(source, *base, width, theme);
+                }
+            } else {
+                block.source_view = None;
+            }
+            block.showing_source = block.source_view.is_some();
             let preserve = block.preserves_columns();
             let (text, offsets) = block.shown();
             let lines = text.lines.iter().zip(offsets);

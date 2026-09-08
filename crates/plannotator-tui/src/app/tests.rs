@@ -422,9 +422,10 @@ fn the_rail_costs_no_width_until_an_annotation_exists() {
     assert!(marked >= 20, "the document keeps its minimum width");
 }
 
-/// Two documents in different directories, presented together.
-fn set_app() -> (PathBuf, App) {
-    let root = std::env::temp_dir().join(format!("plannotator-tui-set-{}", std::process::id()));
+/// Two documents in different directories, presented together. Each caller gets its own root:
+/// tests run in parallel, so a shared one has them deleting each other's fixtures.
+fn set_app(name: &str) -> (PathBuf, App) {
+    let root = std::env::temp_dir().join(format!("plannotator-tui-set-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("one")).expect("dir");
     std::fs::create_dir_all(root.join("two")).expect("dir");
@@ -439,7 +440,7 @@ fn set_app() -> (PathBuf, App) {
 
 #[test]
 fn a_presented_set_lists_exactly_its_documents_by_relative_name() {
-    let (_root, app) = set_app();
+    let (_root, app) = set_app("lists");
     let tree = app.tree.as_ref().expect("a tree");
     let names: Vec<&str> = tree.rows.iter().map(|r| r.name.as_str()).collect();
     // Same basename in both directories: the relative path keeps them apart.
@@ -449,7 +450,7 @@ fn a_presented_set_lists_exactly_its_documents_by_relative_name() {
 
 #[test]
 fn shift_tab_walks_the_documents_and_wraps() {
-    let (_root, mut app) = set_app();
+    let (_root, mut app) = set_app("walks");
     let opened = |app: &App| match &app.open.source.provenance {
         Provenance::File { path } => path.clone(),
         _ => PathBuf::new(),
