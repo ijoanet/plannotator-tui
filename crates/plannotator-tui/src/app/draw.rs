@@ -1,6 +1,6 @@
-//! Drawing: the tab row, header, gutter + document, annotation rail, footer, and the
-//! floating toolbar and compose box. Pure over `App` except for recording geometry for
-//! hit-testing.
+//! Drawing: the tab row, header, gutter + document, annotation rail, footer and the floating
+//! toolbar. Pure over `App` except for recording geometry for hit-testing. The compose box is
+//! `compose_view`: it floats over the document and needs nothing from this layout but an anchor.
 
 use std::ops::Range;
 
@@ -20,7 +20,6 @@ const RAIL_WIDTH: u16 = 36;
 const RAIL_MIN_WIDTH: u16 = 28;
 /// Below this the rail is dropped and annotations are only marked in the gutter.
 pub(super) const RAIL_MIN_TOTAL_WIDTH: u16 = 80;
-const COMPOSE_WIDTH: u16 = 48;
 
 /// Painting precedence when annotations overlap a cell.
 fn priority(kind: Kind) -> u8 {
@@ -228,8 +227,9 @@ impl App {
     }
 
     /// Screen position for a floating widget anchored at the pending selection: one row
-    /// above its first row when there is room, else just below its last row.
-    fn float_origin(&self, height: u16, width: u16) -> Option<Rect> {
+    /// above its first row when there is room, else just below its last row. The toolbar and
+    /// the compose box share it, so both appear where the selection is.
+    pub(super) fn float_origin(&self, height: u16, width: u16) -> Option<Rect> {
         let pending = self.pending.as_ref()?;
         let doc = self.geometry.doc;
         let (row, col) = pending.at;
@@ -267,61 +267,6 @@ impl App {
             x += w;
         }
         self.geometry.toolbar = Some((rect, spans));
-    }
-
-    /// The compose box: at the pending selection when there is one, else over the rail
-    /// bubble being edited, else centered.
-    /// The compose box title; the Shift+Enter hint appears only when the terminal
-    /// actually distinguishes it, so the hint is never a lie.
-    fn compose_title(&self, verb: &str) -> String {
-        let newline = if self.shift_enter { "shift+enter new line" } else { "alt+enter new line" };
-        format!(" {verb} \u{b7} enter saves \u{b7} {newline} \u{b7} esc cancels ")
-    }
-
-    fn draw_compose(&self, frame: &mut Frame, title: &str) {
-        let theme = self.render.theme;
-        let wrap_width = usize::from(COMPOSE_WIDTH.saturating_sub(3));
-        let (lines, cursor_row, cursor_col) = self.compose.wrapped(wrap_width);
-        let content_rows = lines.len().clamp(1, 8);
-        let height = content_rows as u16 + 2;
-        let rect = self
-            .float_origin(height, COMPOSE_WIDTH)
-            .or_else(|| self.edit_origin(height, COMPOSE_WIDTH))
-            .unwrap_or_else(|| {
-                let area = frame.area();
-                let width = COMPOSE_WIDTH.min(area.width);
-                Rect { x: (area.width - width) / 2, y: area.height / 2, width, height }
-            });
-        frame.render_widget(Clear, rect);
-        let boxed = Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::new().fg(theme.comment))
-            .title(Span::styled(title.to_owned(), Style::new().dim()));
-        let inner = boxed.inner(rect);
-        frame.render_widget(boxed, rect);
-        // Keep the cursor's row visible when the comment is taller than the box.
-        let scroll = cursor_row.saturating_sub(content_rows - 1);
-        for (i, line) in lines.iter().skip(scroll).take(content_rows).enumerate() {
-            let row = Rect {
-                x: inner.x + 1,
-                y: inner.y + i as u16,
-                width: inner.width.saturating_sub(1),
-                height: 1,
-            };
-            frame.render_widget(Paragraph::new(Line::from(line.clone())), row);
-        }
-        let cursor_x = inner.x + 1 + cursor_col as u16;
-        let cursor_y = inner.y + (cursor_row - scroll) as u16;
-        frame.set_cursor_position((cursor_x.min(inner.right().saturating_sub(1)), cursor_y));
-    }
-
-    fn edit_origin(&self, height: u16, width: u16) -> Option<Rect> {
-        let Mode::Edit(id) = &self.mode else { return None };
-        let (rect, _) = self.geometry.bubbles.iter().find(|(_, bubble_id)| bubble_id == id)?;
-        let area = self.geometry.doc.union(*rect);
-        let x = rect.right().saturating_sub(width).max(area.x);
-        Some(Rect { x, y: rect.y, width: width.min(area.width), height })
     }
 
     fn draw_rail(&mut self, frame: &mut Frame, rail: Rect) {

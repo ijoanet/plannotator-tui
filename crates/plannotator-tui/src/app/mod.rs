@@ -2,6 +2,7 @@
 //! the data they share and the operations that change it.
 
 mod compose;
+mod compose_view;
 mod draw;
 mod footer;
 mod header;
