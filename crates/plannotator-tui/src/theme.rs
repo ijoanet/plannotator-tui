@@ -36,6 +36,11 @@ pub(crate) struct ThemeConfig {
     pub(crate) muted: String,
     /// Diagram box-drawing.
     pub(crate) border: String,
+    /// Code inside a fenced block. Plain by default: the fence is hidden and per-token colors
+    /// carry the meaning, so a tinted base would fight them.
+    pub(crate) code_block: String,
+    /// The rule drawn down the left of a code block, and its continuation marker.
+    pub(crate) code_block_border: String,
     pub(crate) comment: String,
     pub(crate) approve: String,
     pub(crate) delete: String,
@@ -63,6 +68,8 @@ pub(crate) struct Theme {
     pub(crate) accent: Color,
     pub(crate) muted: Color,
     pub(crate) border: Color,
+    pub(crate) code_block: Color,
+    pub(crate) code_block_border: Color,
     pub(crate) comment: Color,
     pub(crate) approve: Color,
     pub(crate) delete: Color,
@@ -88,6 +95,8 @@ impl Default for Theme {
             accent: Color::Cyan,
             muted: Color::DarkGray,
             border: Color::DarkGray,
+            code_block: Color::Reset,
+            code_block_border: Color::DarkGray,
             comment: Color::Yellow,
             approve: Color::Green,
             delete: Color::Red,
@@ -115,6 +124,8 @@ impl Theme {
             accent: color(&config.accent, "accent", d.accent)?,
             muted: color(&config.muted, "muted", d.muted)?,
             border: color(&config.border, "border", d.border)?,
+            code_block: color(&config.code_block, "code_block", d.code_block)?,
+            code_block_border: color(&config.code_block_border, "code_block_border", d.code_block_border)?,
             comment: color(&config.comment, "comment", d.comment)?,
             approve: color(&config.approve, "approve", d.approve)?,
             delete: color(&config.delete, "delete", d.delete)?,

@@ -36,9 +36,6 @@ const RECORD_GAP: usize = 1;
 /// A label needs this much room left over before it shares a line with its value.
 const LABEL_HEADROOM: usize = 12;
 
-/// One output cell: a character, its source byte, and how to paint it.
-/// Shared with the code-block layout; see `wrap::Painted`.
-
 /// Render one table block to fit `width`, as a table if it can be, else as records.
 pub(crate) fn render(
     source: &str,
@@ -108,18 +105,18 @@ fn draw(
     let mut lines: Vec<Line<'static>> = Vec::new();
     let mut offsets: Vec<LineOffsets> = Vec::new();
 
-    push(&mut lines, &mut offsets, rule(widths, ['┌', '┬', '┐'], border));
+    push(&mut lines, &mut offsets, &rule(widths, ['┌', '┬', '┐'], border));
     let header_style = Style::from(theme.text).add_modifier(Modifier::BOLD);
     for line in body(headers, widths, header_style, border) {
-        push(&mut lines, &mut offsets, line);
+        push(&mut lines, &mut offsets, &line);
     }
-    push(&mut lines, &mut offsets, rule(widths, ['├', '┼', '┤'], border));
+    push(&mut lines, &mut offsets, &rule(widths, ['├', '┼', '┤'], border));
     for row in rows {
         for line in body(row, widths, Style::from(theme.text), border) {
-            push(&mut lines, &mut offsets, line);
+            push(&mut lines, &mut offsets, &line);
         }
     }
-    push(&mut lines, &mut offsets, rule(widths, ['└', '┴', '┘'], border));
+    push(&mut lines, &mut offsets, &rule(widths, ['└', '┴', '┘'], border));
     (Text::from(lines), offsets)
 }
 
@@ -169,8 +166,8 @@ fn body(row: &[Cell], widths: &[usize], text: Style, border: Style) -> Vec<Vec<P
 }
 
 /// Add one line, merging equal-styled runs into spans.
-fn push(lines: &mut Vec<Line<'static>>, offsets: &mut Vec<LineOffsets>, painted: Vec<Painted>) {
-    let (line, map) = crate::wrap::paint(&painted);
+fn push(lines: &mut Vec<Line<'static>>, offsets: &mut Vec<LineOffsets>, painted: &[Painted]) {
+    let (line, map) = crate::wrap::paint(painted);
     lines.push(line);
     offsets.push(map);
 }
@@ -265,11 +262,8 @@ fn records(
             let prefix = format!("{label}: ");
             let inline = width > prefix.chars().count() + LABEL_HEADROOM;
             if !inline {
-                push(
-                    &mut lines,
-                    &mut offsets,
-                    prefix.trim_end().chars().map(|c| (c, None, label_style)).collect(),
-                );
+                let label: Vec<Painted> = prefix.trim_end().chars().map(|c| (c, None, label_style)).collect();
+                push(&mut lines, &mut offsets, &label);
             }
             let body_width = if inline { width - prefix.chars().count() } else { width - 2 };
             let wrapped = wrap(cell, body_width.max(1));
@@ -280,7 +274,7 @@ fn records(
                     vec![(' ', None, text_style), (' ', None, text_style)]
                 };
                 painted.extend(part.iter().map(|&(ch, at)| (ch, at, text_style)));
-                push(&mut lines, &mut offsets, painted);
+                push(&mut lines, &mut offsets, &painted);
             }
         }
     }

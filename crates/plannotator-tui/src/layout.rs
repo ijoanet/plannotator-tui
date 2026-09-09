@@ -36,6 +36,12 @@ impl StyleSheet for Styles {
     fn heading_marker(&self, _level: u8) -> &'static str {
         ""
     }
+    /// No backticks. A top-level code block is laid out by `code`, which shows the language as a
+    /// label instead; this hides the fence of a block nested inside a list or a quote, which
+    /// `tui-markdown` still renders.
+    fn code_block_fence(&self) -> &'static str {
+        ""
+    }
     fn code(&self) -> Style {
         Style::new().fg(self.0.code)
     }
@@ -62,6 +68,9 @@ pub(crate) struct RenderedBlock {
     intrinsic_width: usize,
     /// A table's own Markdown and where it starts, to re-render it narrow at any width.
     table_source: Option<(String, usize)>,
+    /// A code block, parsed once, laid out at every width. Code is always laid out here rather
+    /// than clipped, so unlike a table this is not a fallback.
+    code: Option<crate::code::CodeBlock>,
     /// The narrow rendering for the current width, when `showing_source`.
     source_view: Option<(Text<'static>, Vec<LineOffsets>)>,
     /// Set during reflow when `source_view` is what the current width shows.
@@ -73,10 +82,11 @@ pub(crate) struct RenderedBlock {
 }
 
 impl RenderedBlock {
-    /// Art and code keep their columns; prose word-wraps. A table shown as its own Markdown
-    /// wraps, because that is the point of falling back to it.
+    /// Art and code keep their columns; prose word-wraps. A block relaid out from its own source
+    /// (a narrow table, any code block) is already exactly as wide as the pane, so re-wrapping it
+    /// is a no-op that would only risk moving its indentation.
     fn preserves_columns(&self) -> bool {
-        !self.showing_source && (self.art.is_some() || self.kind.preserves_columns())
+        self.showing_source || self.art.is_some() || self.kind.preserves_columns()
     }
 
     /// The text and offsets the current width shows.
@@ -154,6 +164,9 @@ impl DocLayout {
                 // expected to be clipped and art has no smaller form.
                 let table_source = (block.kind == BlockKind::Table)
                     .then(|| (doc.block_text(i).to_owned(), block.range.start));
+                let code = (block.kind == BlockKind::CodeBlock && art.is_none())
+                    .then(|| crate::code::parse(doc.block_text(i), block.range.start))
+                    .flatten();
                 RenderedBlock {
                     text,
                     offsets,
@@ -162,6 +175,7 @@ impl DocLayout {
                     art,
                     intrinsic_width,
                     table_source,
+                    code,
                     source_view: None,
                     showing_source: false,
                     rows: Vec::new(),
@@ -190,9 +204,14 @@ impl DocLayout {
                 block.text = art.to_text(width);
                 block.offsets = art_offsets(&block.text);
             }
-            // A table wider than the pane is re-rendered as records for this width. Cheap: only
-            // tables that do not fit, only when the width changes.
-            if block.intrinsic_width > width
+            // A code block is always laid out here: wrapped, ruled and labelled rather than
+            // clipped. A table only when it does not fit. Both are width-dependent, so both are
+            // redone when the width changes and left alone when it has not.
+            if let Some(code) = &block.code {
+                if resample || block.source_view.is_none() {
+                    block.source_view = Some(code.to_text(width, theme));
+                }
+            } else if block.intrinsic_width > width
                 && let Some((source, base)) = &block.table_source
             {
                 if resample || block.source_view.is_none() {
@@ -368,6 +387,23 @@ mod tests {
         assert!(shown.iter().any(|l| l.contains("anywhere")), "the tail survives: {shown:?}");
         assert!(block.rows.iter().any(|r| r.cells.iter().any(Option::is_some)), "and is selectable");
         assert!(shown.iter().all(|l| l.chars().count() <= 30), "and fits: {shown:?}");
+    }
+
+    #[test]
+    fn a_code_line_longer_than_the_pane_wraps_rather_than_clipping() {
+        let command = "gh pr list --state open --limit 60 --json number,title,author,headRefName";
+        let doc = Document::parse(format!("```bash\n{command}\n```\n"));
+        let layout = DocLayout::build(&doc, 40, &RenderContext::text_only());
+        let block = layout.blocks.first().expect("one block");
+        let rows: Vec<String> = block.rows.iter().map(|r| r.line.to_string()).collect();
+
+        assert!(rows.iter().all(|r| !r.contains("```")), "the fence is hidden: {rows:?}");
+        assert!(rows.len() > 2, "the long line took more than one row: {rows:?}");
+        // The tail that used to be clipped away is on screen, and still points at the source, so
+        // it can be selected and quoted.
+        assert!(rows.iter().any(|r| r.contains("headRefName")), "the tail survives: {rows:?}");
+        assert!(block.rows.iter().any(|r| r.cells.iter().any(Option::is_some)), "and is selectable");
+        assert!(rows.iter().all(|r| r.chars().count() <= 40), "and fits: {rows:?}");
     }
 
     #[test]
