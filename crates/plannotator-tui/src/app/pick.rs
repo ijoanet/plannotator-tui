@@ -108,7 +108,7 @@ impl App {
                 self.pick_cursor = self.pick_return;
                 self.mode = Mode::Browse;
             }
-            KeyCode::Char('q') => self.quit = true,
+            KeyCode::Char('q') => self.exit = super::Exit::Quit,
             _ => {}
         }
         Ok(())

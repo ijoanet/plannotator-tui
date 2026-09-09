@@ -8,8 +8,7 @@ use ratatui::crossterm::event::{
 
 use super::compose::ComposeAction;
 use super::selection::Selection;
-use super::send::SendState;
-use super::{App, Focus, GUTTER, Mode, Pending, TOOLBAR};
+use super::{App, Exit, Focus, GUTTER, Mode, Pending, TOOLBAR};
 use crate::delivery::Delivery as _;
 
 impl App {
@@ -47,7 +46,11 @@ impl App {
                 self.toggle_rail_focus();
                 return Ok(());
             }
-            (KeyCode::Char('E'), _) => return self.send_feedback(),
+            (KeyCode::Char('E'), _) => {
+                self.send_feedback()?;
+                return Ok(());
+            }
+            (KeyCode::Char('A'), _) => return self.send_and_close(),
             (KeyCode::Char('r'), _) => return self.reload(),
             (KeyCode::Char('p'), _) => {
                 self.reopen_picker();
@@ -66,13 +69,16 @@ impl App {
         match key.code {
             KeyCode::Char('y' | 'Y') | KeyCode::Enter => {
                 self.mode = Mode::Browse;
-                self.send_feedback()?;
-                // A refused send keeps the app open so the footer can say why.
-                self.quit = self.send_state == SendState::Sent;
+                // A refused send keeps the app open so the footer can say why. Only this send's
+                // outcome may decide that; the button's state could still be `Sent` from an
+                // earlier one.
+                if self.send_feedback()? {
+                    self.exit = Exit::Quit;
+                }
             }
             KeyCode::Char('n' | 'N') => {
                 self.mode = Mode::Browse;
-                self.quit = true;
+                self.exit = Exit::Quit;
             }
             KeyCode::Esc => self.mode = Mode::Browse,
             _ => {}
@@ -277,7 +283,8 @@ impl App {
             MouseEventKind::ScrollUp => self.scroll_by(-3),
             MouseEventKind::Down(MouseButton::Left) => {
                 if self.send_button_hit(mouse.column, mouse.row) {
-                    return self.send_feedback();
+                    self.send_feedback()?;
+                    return Ok(());
                 }
                 if let Some(kind) = self.toolbar_hit(mouse.column, mouse.row) {
                     return self.act(kind);

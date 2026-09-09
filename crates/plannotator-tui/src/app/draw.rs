@@ -384,7 +384,9 @@ impl App {
         let help = match self.focus {
             _ if self.pending.is_some() => "a looks good · c comment · d delete · esc clear ",
             Focus::Rail => "j/k · e edit · x remove · esc · q quit ",
-            Focus::Document => "drag or v select · c comment · E send · tab · q quit ",
+            // "drag or" is dropped to make room for `A`: the status shares this line and must
+            // not be truncated away, which is why it is drawn first.
+            Focus::Document => "v select · c comment · E send · A send+close · q quit ",
         };
         let [left_area, right_area] =
             Layout::horizontal([Constraint::Min(10), Constraint::Length(help.width() as u16)]).areas(area);

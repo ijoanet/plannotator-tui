@@ -316,13 +316,20 @@ pub(crate) fn run_ui(build: impl FnOnce(usize) -> Result<App>) -> Result<()> {
     let _ = execute!(stdout(), DisableBracketedPaste);
     let _ = execute!(stdout(), DisableMouseCapture);
     ratatui::restore();
-    result
+    // `A` asked for the pane to go with the app. This happens after the terminal is restored,
+    // because closing the pane destroys the PTY underneath it and `restore` would then be
+    // writing to a terminal that no longer exists.
+    if matches!(result, Ok(true)) {
+        HerdrEnv::from_env().close_own_pane();
+    }
+    result.map(|_| ())
 }
 
-fn event_loop(terminal: &mut ratatui::DefaultTerminal, mut app: App) -> Result<()> {
+/// Run until the app quits. Returns whether it asked for its Herdr pane to be closed too.
+fn event_loop(terminal: &mut ratatui::DefaultTerminal, mut app: App) -> Result<bool> {
     app.clipboard = true;
     let mut dirty = true;
-    while !app.quit {
+    while app.exit == crate::app::Exit::Stay {
         if dirty {
             let started = Instant::now();
             terminal.draw(|frame| app.draw(frame))?;
@@ -338,7 +345,7 @@ fn event_loop(terminal: &mut ratatui::DefaultTerminal, mut app: App) -> Result<(
             }
         }
     }
-    Ok(())
+    Ok(app.exit == crate::app::Exit::QuitAndClosePane)
 }
 
 /// Headless timing of the expensive paths: parse, per-block render + align, and reflow.

@@ -170,7 +170,21 @@ pub(crate) struct App {
     frame_max_ms: f64,
     /// Copy selections to the terminal clipboard (off for headless runs).
     pub(crate) clipboard: bool,
-    pub(crate) quit: bool,
+    pub(crate) exit: Exit,
+}
+
+/// Whether the reviewer is still running, and what becomes of its pane when it is not.
+///
+/// One value rather than a `quit` flag beside a `close_pane` flag, because closing the pane
+/// without leaving is not a state that means anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum Exit {
+    #[default]
+    Stay,
+    /// Leave the reviewer; the pane it runs in is someone else's.
+    Quit,
+    /// `A`: leave, and take the Herdr pane with it.
+    QuitAndClosePane,
 }
 
 impl std::fmt::Debug for App {
@@ -230,7 +244,7 @@ impl App {
             frame_ms: 0.0,
             frame_max_ms: 0.0,
             clipboard: false,
-            quit: false,
+            exit: Exit::Stay,
         })
     }
 

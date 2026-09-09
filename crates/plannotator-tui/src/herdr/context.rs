@@ -135,6 +135,29 @@ impl HerdrEnv {
         let json = self.pane_json(&["pane", "get", pane])?;
         json.pointer("/result/pane/agent")?.as_str().map(str::to_owned)
     }
+
+    /// Whether there is a pane of our own to close: only inside Herdr, and only when Herdr told
+    /// us which pane we are.
+    pub(crate) fn can_close_own_pane(&self) -> bool {
+        self.in_herdr && self.pane_id.is_some()
+    }
+
+    /// Close the pane this process runs in (`herdr pane close`).
+    ///
+    /// This is the one place `HERDR_PANE_ID` is used as a target rather than avoided: it is the
+    /// pane being dismissed, not somewhere to deliver to. Closing it kills this process's
+    /// terminal, so the caller must have restored the terminal first. Best effort: a failure
+    /// leaves the pane open, which is visible enough on its own.
+    pub(crate) fn close_own_pane(&self) {
+        if !self.can_close_own_pane() {
+            return;
+        }
+        let Some(pane) = self.pane_id.as_deref() else { return };
+        let _ = std::process::Command::new(&self.bin)
+            .args(["pane", "close", pane])
+            .stdin(std::process::Stdio::null())
+            .status();
+    }
 }
 
 #[cfg(test)]
@@ -202,6 +225,14 @@ mod tests {
         let env = env(&[("HERDR_ENV", "1"), ("HERDR_PANE_ID", "w1:p3")]);
         assert_eq!(env.pane_id.as_deref(), Some("w1:p3"));
         assert_eq!(env.delivery_target(), None);
+    }
+
+    #[test]
+    fn only_a_known_pane_inside_herdr_is_ours_to_close() {
+        // The one legitimate use of HERDR_PANE_ID: the pane being dismissed.
+        assert!(env(&[("HERDR_ENV", "1"), ("HERDR_PANE_ID", "w1:p3")]).can_close_own_pane());
+        assert!(!env(&[("HERDR_PANE_ID", "w1:p3")]).can_close_own_pane(), "outside Herdr");
+        assert!(!env(&[("HERDR_ENV", "1")]).can_close_own_pane(), "Herdr never said which pane");
     }
 
     #[test]

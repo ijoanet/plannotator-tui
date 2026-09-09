@@ -150,12 +150,12 @@ fn quitting_with_unsent_feedback_asks_before_it_quits() {
     app.add_block_annotation(0, Kind::Comment, "x".to_owned()).expect("annotation");
     app.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('q')))).expect("q");
     assert_eq!(app.mode, Mode::ConfirmQuit);
-    assert!(!app.quit, "the question is asked instead of quitting");
+    assert_eq!(app.exit, super::Exit::Stay, "the question is asked instead of quitting");
     let rows = draw(&mut app);
     let footer = row(&rows, 19);
     assert!(footer.contains("before quitting? y send · n quit · esc cancel"), "footer was {footer:?}");
     app.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('n')))).expect("n");
-    assert!(app.quit, "n quits without sending");
+    assert_eq!(app.exit, super::Exit::Quit, "n quits without sending");
     assert_eq!(app.send_state, SendState::Ready, "nothing was sent");
 }
 
@@ -493,6 +493,27 @@ fn cycling_one_document_is_a_no_op() {
     let before = app.open.doc.source.clone();
     app.cycle_document().expect("no-op");
     assert_eq!(app.open.doc.source, before);
+}
+
+#[test]
+fn a_closes_the_pane_only_when_the_review_actually_went_somewhere() {
+    let mut app = app(Box::new(Discard));
+    app.add_block_annotation(0, Kind::Comment, "ship it".to_owned()).expect("annotation");
+    app.handle_event(&key(KeyCode::Char('A'), KeyModifiers::NONE)).expect("A");
+    assert_eq!(app.send_state, SendState::Sent);
+    assert_eq!(app.exit, super::Exit::QuitAndClosePane, "A dismisses the reviewer and its pane");
+}
+
+#[test]
+fn a_refused_send_keeps_the_pane_open_so_its_status_can_be_read() {
+    // A real agent target whose binary does not exist: delivery fails for a real reason.
+    let mut app = app(agent());
+    app.add_block_annotation(0, Kind::Comment, "ship it".to_owned()).expect("annotation");
+    app.handle_event(&key(KeyCode::Char('A'), KeyModifiers::NONE)).expect("A");
+    assert_eq!(app.exit, super::Exit::Stay, "nothing reached the agent, so both stay");
+    let rows = draw(&mut app);
+    let footer = row(&rows, rows.len() - 1);
+    assert!(footer.contains("no agent to send to"), "the reason is on screen: {footer:?}");
 }
 
 #[test]

@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 
-use super::{App, Mode, Open, read_file};
+use super::{App, Exit, Mode, Open, read_file};
 use crate::delivery::{Clipboard, Delivery as _, DeliveryError};
 use crate::store::Store;
 use plannotator_tui_schema::{Kind, Provenance};
@@ -20,7 +20,11 @@ pub(super) enum SendState {
 
 impl App {
     /// Send feedback: every annotated document's in a set, else the open one's.
-    pub(super) fn send_feedback(&mut self) -> Result<()> {
+    ///
+    /// Returns whether it actually reached the target. `Blocked` and `Unavailable` fall back to
+    /// the clipboard, so the agent received nothing; callers that act on a send must not read
+    /// `send_state` instead, because it may still say `Sent` from an earlier one.
+    pub(super) fn send_feedback(&mut self) -> Result<bool> {
         let text = if self.docs.is_some() { self.set_feedback()? } else { self.feedback() };
         let count = self.send_count();
         let target = self.delivery.describe();
@@ -37,20 +41,35 @@ impl App {
                     (0, true) => format!("sent {count} annotation(s) → {target}"),
                     (n, _) => format!("sent {count} annotation(s) → {target} · cleared {n}"),
                 });
+                Ok(true)
             }
             Err(DeliveryError::Blocked(msg)) => {
                 self.copy_fallback(&text);
                 self.status =
                     Some(format!("{target} is at a dialog — copied to clipboard instead; E retries"));
                 self.send_state = SendState::Blocked(msg);
+                Ok(false)
             }
             Err(DeliveryError::Unavailable(msg)) => {
                 self.copy_fallback(&text);
                 self.status = Some(format!("no agent to send to ({msg}) — copied to clipboard"));
+                Ok(false)
             }
             Err(DeliveryError::Failed(err)) => {
                 self.status = Some(format!("send failed: {err:#}"));
+                Ok(false)
             }
+        }
+    }
+
+    /// `A`: hand the review over and dismiss the reviewer, pane and all.
+    ///
+    /// Only a delivery that reached the target closes anything. A refused or failed send leaves
+    /// the pane open, because the status line is then the only thing that says what happened, and
+    /// closing the pane would take it with them.
+    pub(super) fn send_and_close(&mut self) -> Result<()> {
+        if self.send_feedback()? {
+            self.exit = Exit::QuitAndClosePane;
         }
         Ok(())
     }
@@ -195,7 +214,7 @@ impl App {
         if self.has_unsent() {
             self.mode = Mode::ConfirmQuit;
         } else {
-            self.quit = true;
+            self.exit = Exit::Quit;
         }
     }
 
