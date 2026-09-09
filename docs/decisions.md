@@ -615,6 +615,13 @@ which is what `gitsigns.nvim` shows and the whole reason untracked has a separat
 file in a repository before its first commit is all added: nothing to diff against, so every line is
 new rather than unknown.
 
+A row is not a source line, and the design's own wording ("a row's first mapped source byte gives
+its line") was wrong. Prose reflows, so one row carries several source lines; asking only about the
+first byte hid a modified line whenever an unchanged one started the row, which is most of a
+paragraph. A row is barred if anything in it changed, most telling kind winning: changed over added,
+untracked last. Found by demonstrating the feature, not by a test, and pinned on the drawn buffer
+because the defect was in the drawing rather than in the parser or the map.
+
 The parser is pure and the runner infallible. No repository, no `HEAD`, or no git at all gives no
 bars and never an error, because a document must still render on a machine without git. One read per
 document open and per `r`, never while drawing.
