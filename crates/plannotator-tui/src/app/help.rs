@@ -348,7 +348,7 @@ mod tests {
     use super::*;
 
     /// Keys the handler matches that are deliberately absent from the table, with the reason.
-    const EXEMPT: [&str; 8] = [
+    const EXEMPT: [&str; 9] = [
         // Vim motions inside a visual selection; the overlay says "select text" rather than
         // teaching vim, and `w`/`b`/`0`/`$` are only live mid-drag.
         "w",
@@ -361,6 +361,10 @@ mod tests {
         "BackTab",
         // ctrl+c, whose character is already listed as the comment key.
         "C",
+        // ctrl+J inserts a newline in the compose box, the fallback for terminals where
+        // shift+enter cannot be distinguished. The overlay describes reviewing, not text editing,
+        // and the box states its own newline key in its title.
+        "J",
     ];
 
     /// Every module that answers a key. `input.rs` is the main handler; the compose box and the
@@ -389,9 +393,23 @@ mod tests {
             let mut rest = code.as_str();
             while let Some(at) = rest.find("KeyCode::") {
                 let after = rest.get(at + "KeyCode::".len()..).unwrap_or("");
-                if let Some(tail) = after.strip_prefix("Char('") {
-                    if let Some(ch) = tail.chars().next() {
-                        found.push((ch.to_string(), module));
+                if let Some(tail) = after.strip_prefix("Char(") {
+                    // EVERY alternative of an or-pattern, not just the first. `Char('y' | 'Y')`
+                    // used to yield only "y", so a key bound solely as a later alternative was
+                    // invisible to the one test whose job is catching undocumented keys.
+                    let pattern = tail.split(')').next().unwrap_or("");
+                    let mut chars = pattern.chars();
+                    while let Some(quote) = chars.next() {
+                        if quote != '\'' {
+                            continue;
+                        }
+                        // Take the literal, then eat its closing quote. Without that the closing
+                        // quote reads as another opening one and the separator after it is
+                        // captured as a key, which is how this parser first reported " ".
+                        if let Some(ch) = chars.next() {
+                            found.push((ch.to_string(), module));
+                        }
+                        chars.next();
                     }
                 } else {
                     let name: String = after.chars().take_while(char::is_ascii_alphanumeric).collect();
