@@ -41,6 +41,14 @@ const RULE_CHROME: usize = 2;
 /// `│ ↳ ` before a continuation row.
 const CONTINUATION_CHROME: usize = 4;
 
+/// Blocks a document may highlight before the rest render plain.
+///
+/// Highlighting costs about 0.14 ms per block, so `samples/big.md` and its 2,796 code blocks paid
+/// ~380 ms of a 733 ms render. A document written for a person to read has tens of blocks, not
+/// thousands, so this bounds a pathological document without touching a normal one: the worst case
+/// becomes ~28 ms and the remaining blocks still render, just in body text.
+pub(crate) const HIGHLIGHT_CEILING: usize = 200;
+
 /// One code block, parsed once and laid out per width.
 ///
 /// Held rather than re-parsed on resize because parsing and highlighting are width-independent;
@@ -50,10 +58,22 @@ pub(crate) struct CodeBlock {
     /// The fence's info string. Shown as a label, since the fence itself is hidden.
     language: Option<String>,
     lines: Vec<Vec<Char>>,
+    /// Whether syntect classified this block, so the caller can count what it cost.
+    highlighted: bool,
+}
+
+impl CodeBlock {
+    /// Whether this block was highlighted, which is what the per-document ceiling counts.
+    pub(crate) fn highlighted(&self) -> bool {
+        self.highlighted
+    }
 }
 
 /// Parse one code block, or `None` if `source` holds no code block.
-pub(crate) fn parse(source: &str, base: usize) -> Option<CodeBlock> {
+///
+/// `highlight` is the caller's permission, not a request: a block with no language, or one syntect
+/// cannot resolve, stays plain either way.
+pub(crate) fn parse(source: &str, base: usize, highlight: bool) -> Option<CodeBlock> {
     let mut language = None;
     let mut inside = false;
     let mut chars: Vec<(char, Option<usize>)> = Vec::new();
@@ -85,17 +105,21 @@ pub(crate) fn parse(source: &str, base: usize) -> Option<CodeBlock> {
         return None;
     }
     let lines = split_lines(&chars);
-    Some(CodeBlock { lines: highlighted(language.as_deref(), lines), language })
+    // The language still labels the block when highlighting is off; only the colour is withheld.
+    let for_colour = language.as_deref().filter(|_| highlight);
+    let (lines, was_highlighted) = classified(for_colour, lines);
+    Some(CodeBlock { lines, language, highlighted: was_highlighted })
 }
 
 /// Attach a token to every character, from syntect where the language is known.
 ///
 /// A language nobody names, or one syntect has no syntax for, leaves the block plain rather than
 /// guessing: unhighlighted code still reads, mis-highlighted code misleads.
-fn highlighted(language: Option<&str>, lines: Vec<Vec<(char, Option<usize>)>>) -> Vec<Vec<Char>> {
+fn classified(language: Option<&str>, lines: Vec<Vec<(char, Option<usize>)>>) -> (Vec<Vec<Char>>, bool) {
     let plain: Vec<String> = lines.iter().map(|line| line.iter().map(|&(ch, _)| ch).collect()).collect();
     let tokens = language.and_then(|language| highlight::classify(language, &plain));
-    lines
+    let was_highlighted = tokens.is_some();
+    let out = lines
         .into_iter()
         .enumerate()
         .map(|(index, line)| {
@@ -107,7 +131,8 @@ fn highlighted(language: Option<&str>, lines: Vec<Vec<(char, Option<usize>)>>) -
                 })
                 .collect()
         })
-        .collect()
+        .collect();
+    (out, was_highlighted)
 }
 
 /// Split verbatim code into lines, dropping the newlines themselves.
@@ -224,7 +249,7 @@ mod tests {
     const BASH: &str = "```bash\ngh pr list --limit 60\necho short\n```";
 
     fn shown(source: &str, width: usize) -> Vec<String> {
-        let (text, _) = parse(source, 0).expect("a code block").to_text(width, Theme::default());
+        let (text, _) = parse(source, 0, true).expect("a code block").to_text(width, Theme::default());
         text.lines.iter().map(ToString::to_string).collect()
     }
 
@@ -291,7 +316,7 @@ mod tests {
     fn a_wrapped_character_keeps_the_source_byte_it_came_from() {
         let source = format!("```bash\n{LONG}\n```");
         let base = 500;
-        let (text, offsets) = parse(&source, base).expect("a code block").to_text(40, Theme::default());
+        let (text, offsets) = parse(&source, base, true).expect("a code block").to_text(40, Theme::default());
         // One entry per rendered character, which is what `LineOffsets` means. Asserting the
         // column count here is what let a wide-character shift through; the invariant that a
         // column maps to the character drawn at it lives in `layout`'s tests.
@@ -322,7 +347,8 @@ mod tests {
     #[test]
     fn a_highlighted_block_paints_tokens_in_their_own_colors() {
         let theme = Theme::default();
-        let (text, _) = parse("```bash\necho hi # note\n```", 0).expect("a code block").to_text(60, theme);
+        let (text, _) =
+            parse("```bash\necho hi # note\n```", 0, true).expect("a code block").to_text(60, theme);
         let row = text.lines.get(1).expect("the code row");
         let colors: Vec<_> = row.spans.iter().filter_map(|s| s.style.fg).collect();
         assert!(colors.contains(&theme.syntax_comment), "the comment took its own color: {colors:?}");
@@ -332,7 +358,8 @@ mod tests {
     #[test]
     fn an_unknown_language_leaves_the_block_in_body_text() {
         let theme = Theme::default();
-        let (text, _) = parse("```not-a-language\necho hi\n```", 0).expect("a code block").to_text(60, theme);
+        let (text, _) =
+            parse("```not-a-language\necho hi\n```", 0, true).expect("a code block").to_text(60, theme);
         let row = text.lines.get(1).expect("the code row");
         let colors: Vec<_> = row.spans.iter().filter_map(|s| s.style.fg).collect();
         assert!(
@@ -342,7 +369,22 @@ mod tests {
     }
 
     #[test]
+    fn highlighting_withheld_leaves_the_block_in_body_text_but_keeps_its_label() {
+        let theme = Theme::default();
+        let block = parse("```bash\necho hi # note\n```", 0, false).expect("a code block");
+        assert!(!block.highlighted(), "nothing was classified");
+        let (text, _) = block.to_text(60, theme);
+        assert_eq!(text.lines.first().map(ToString::to_string).as_deref(), Some("bash"), "label stays");
+        let row = text.lines.get(1).expect("the code row");
+        let colors: Vec<_> = row.spans.iter().filter_map(|s| s.style.fg).collect();
+        assert!(
+            colors.iter().all(|c| *c == theme.code_block || *c == theme.code_block_border),
+            "no syntax colour was used: {colors:?}"
+        );
+    }
+
+    #[test]
     fn prose_is_not_a_code_block() {
-        assert!(parse("just a paragraph\n", 0).is_none());
+        assert!(parse("just a paragraph\n", 0, true).is_none());
     }
 }

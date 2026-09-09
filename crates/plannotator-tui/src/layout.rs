@@ -146,6 +146,8 @@ impl DocLayout {
     /// Render every block once (the expensive part) and lay out for `width`.
     pub(crate) fn build(doc: &Document, width: usize, ctx: &RenderContext) -> Self {
         let mut art = crate::art::render_all(doc, width, ctx);
+        // Highlighting is bounded per document, not per block: see `code::HIGHLIGHT_CEILING`.
+        let mut highlighted = 0usize;
         let blocks = doc
             .blocks
             .iter()
@@ -164,9 +166,13 @@ impl DocLayout {
                 // expected to be clipped and art has no smaller form.
                 let table_source = (block.kind == BlockKind::Table)
                     .then(|| (doc.block_text(i).to_owned(), block.range.start));
+                let may_highlight = ctx.code.highlight && highlighted < crate::code::HIGHLIGHT_CEILING;
                 let code = (block.kind == BlockKind::CodeBlock && art.is_none())
-                    .then(|| crate::code::parse(doc.block_text(i), block.range.start))
+                    .then(|| crate::code::parse(doc.block_text(i), block.range.start, may_highlight))
                     .flatten();
+                if code.as_ref().is_some_and(crate::code::CodeBlock::highlighted) {
+                    highlighted += 1;
+                }
                 RenderedBlock {
                     text,
                     offsets,
@@ -382,6 +388,54 @@ mod tests {
         assert_eq!(layout.rendered_in_range(&doc.source, &(at..at + 1)), "Z");
     }
 
+    /// Whether any row of a block carries a colour that only highlighting produces.
+    fn is_highlighted(block: &RenderedBlock, theme: Theme) -> bool {
+        let (text, _) = block.shown();
+        text.lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .filter_map(|s| s.style.fg)
+            .any(|color| color != theme.code_block && color != theme.code_block_border && color != theme.text)
+    }
+
+    /// A document of `n` bash blocks, each with a comment so highlighting is visible.
+    fn code_document(n: usize) -> Document {
+        use std::fmt::Write as _;
+        let mut blocks = String::new();
+        for i in 0..n {
+            let _ = write!(blocks, "```bash\necho {i} # note\n```\n\n");
+        }
+        Document::parse(blocks)
+    }
+
+    #[test]
+    fn the_highlight_flag_off_leaves_every_block_plain() {
+        let doc = code_document(3);
+        let theme = Theme::default();
+        let mut ctx = RenderContext::text_only();
+        ctx.code.highlight = false;
+        let layout = DocLayout::build(&doc, 60, &ctx);
+        assert_eq!(layout.blocks.len(), 3);
+        assert!(
+            layout.blocks.iter().all(|b| !is_highlighted(b, theme)),
+            "nothing is coloured when the flag is off"
+        );
+    }
+
+    /// Past the ceiling a document keeps rendering; it just stops paying to colour.
+    #[test]
+    fn highlighting_stops_at_the_ceiling_but_every_block_still_renders() {
+        let over = crate::code::HIGHLIGHT_CEILING + 5;
+        let doc = code_document(over);
+        let theme = Theme::default();
+        let layout = DocLayout::build(&doc, 60, &RenderContext::text_only());
+
+        assert_eq!(layout.blocks.len(), over, "every block is still laid out");
+        assert!(layout.blocks.iter().all(|b| !b.rows.is_empty()), "and every one has rows");
+        let coloured = layout.blocks.iter().filter(|b| is_highlighted(b, theme)).count();
+        assert_eq!(coloured, crate::code::HIGHLIGHT_CEILING, "the ceiling bounds what is coloured");
+    }
+
     /// A scratch directory holding one opaque PNG of `size` × `size` pixels.
     fn image_dir(name: &str, size: u32) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("plannotator-tui-layout-{}-{name}", std::process::id()));
@@ -397,8 +451,11 @@ mod tests {
 
     fn image_layout(dir: &Path, width: usize) -> (Document, DocLayout) {
         let doc = Document::parse("![logo](logo.png)\n".to_owned());
-        let ctx =
-            RenderContext { base_dir: dir.to_path_buf(), art: ArtConfig::default(), theme: Theme::default() };
+        let ctx = RenderContext {
+            base_dir: dir.to_path_buf(),
+            art: ArtConfig::default(),
+            ..RenderContext::text_only()
+        };
         let layout = DocLayout::build(&doc, width, &ctx);
         (doc, layout)
     }

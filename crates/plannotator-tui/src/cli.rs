@@ -81,7 +81,12 @@ fn open_app(path: &PathBuf, width: usize, interactive: bool) -> Result<App> {
 /// Rendering settings from the user's config file, for every entry point that opens a document.
 pub(crate) fn render_settings() -> Result<RenderSettings> {
     let config = Config::load()?;
-    Ok(RenderSettings { art: config.art(), theme: config.theme()?, review: config.review.clone() })
+    Ok(RenderSettings {
+        art: config.art(),
+        theme: config.theme()?,
+        review: config.review.clone(),
+        code: config.code.clone(),
+    })
 }
 
 fn parse_kind(s: Option<&str>) -> Kind {

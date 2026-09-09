@@ -18,7 +18,23 @@ pub(crate) struct Config {
     pub(crate) mermaid: MermaidConfig,
     pub(crate) image: ImageConfig,
     pub(crate) review: ReviewConfig,
+    pub(crate) code: CodeConfig,
     pub(crate) theme: crate::theme::ThemeConfig,
+}
+
+/// How code blocks render.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub(crate) struct CodeConfig {
+    /// Colour code by language. Off leaves every block in body text, which is how it looked
+    /// before highlighting existed, and costs nothing.
+    pub(crate) highlight: bool,
+}
+
+impl Default for CodeConfig {
+    fn default() -> Self {
+        Self { highlight: true }
+    }
 }
 
 /// How a review behaves once it has been handed over.

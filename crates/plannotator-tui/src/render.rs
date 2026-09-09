@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::config::{ArtConfig, ReviewConfig};
+use crate::config::{ArtConfig, CodeConfig, ReviewConfig};
 use crate::theme::Theme;
 
 /// Rendering settings for the process, applied to every document opened.
@@ -15,18 +15,24 @@ pub(crate) struct RenderSettings {
     pub(crate) art: ArtConfig,
     pub(crate) theme: Theme,
     pub(crate) review: ReviewConfig,
+    pub(crate) code: CodeConfig,
 }
 
 impl RenderSettings {
     /// Settings for a document read from `path`; relative paths follow the document.
     pub(crate) fn context(&self, path: Option<&Path>) -> RenderContext {
-        RenderContext::for_document(path, self.art.clone(), self.theme)
+        RenderContext::for_document(path, self.art.clone(), self.theme, self.code.clone())
     }
 
     /// Art disabled entirely, default palette: what a test wants unless it says otherwise.
     #[cfg(test)]
     pub(crate) fn text_only() -> Self {
-        Self { art: ArtConfig::disabled(), theme: Theme::default(), review: ReviewConfig::default() }
+        Self {
+            art: ArtConfig::disabled(),
+            theme: Theme::default(),
+            review: ReviewConfig::default(),
+            code: CodeConfig::default(),
+        }
     }
 }
 
@@ -36,22 +42,28 @@ pub(crate) struct RenderContext {
     pub(crate) base_dir: PathBuf,
     pub(crate) art: ArtConfig,
     pub(crate) theme: Theme,
+    pub(crate) code: CodeConfig,
 }
 
 impl RenderContext {
     /// Context for a document read from `path`; relative paths follow the document.
-    pub(crate) fn for_document(path: Option<&Path>, art: ArtConfig, theme: Theme) -> Self {
+    pub(crate) fn for_document(path: Option<&Path>, art: ArtConfig, theme: Theme, code: CodeConfig) -> Self {
         let base_dir = path
             .and_then(Path::parent)
             .map(Path::to_path_buf)
             .or_else(|| std::env::current_dir().ok())
             .unwrap_or_else(|| PathBuf::from("."));
-        Self { base_dir, art, theme }
+        Self { base_dir, art, theme, code }
     }
 
     /// Art disabled entirely: every block renders as text, in the default palette.
     #[cfg(test)]
     pub(crate) fn text_only() -> Self {
-        Self { base_dir: PathBuf::from("."), art: ArtConfig::disabled(), theme: Theme::default() }
+        Self {
+            base_dir: PathBuf::from("."),
+            art: ArtConfig::disabled(),
+            theme: Theme::default(),
+            code: CodeConfig::default(),
+        }
     }
 }
