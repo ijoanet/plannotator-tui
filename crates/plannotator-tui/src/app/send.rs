@@ -1,5 +1,7 @@
 //! Sending feedback to the delivery target and the state the Send button shows.
 
+use std::path::PathBuf;
+
 use anyhow::Result;
 
 use super::{App, Exit, Mode, Open, read_file};
@@ -245,5 +247,61 @@ impl App {
     /// Any annotation change makes the record unsent again.
     pub(super) fn mark_unsent(&mut self) {
         self.send_state = SendState::Ready;
+    }
+    /// Paths of every annotated file a send covers: the project's records (which carry their
+    /// document path since 0.5.0) plus any document in the set with a count, so a record written
+    /// by an older build is still found.
+    ///
+    /// This is what `E`, `record_delivery` and `clear_sent` all walk. It used to come from the
+    /// tree's rows; it now comes from the set's counts, which `sync_doc_counts` keeps current.
+    pub(super) fn annotated_files(&self) -> Vec<PathBuf> {
+        let Some(set) = &self.docs else { return Vec::new() };
+        let mut found = Store::annotated_documents(&self.data_dir, &self.project);
+        for doc in set.docs().iter().filter(|d| d.annotations > 0) {
+            found.push(doc.path.clone());
+        }
+        found.sort();
+        found.dedup();
+        found.retain(|p| p.is_file());
+        found
+    }
+    /// Remember the send on every file it covered: the open one in memory, the rest on disk.
+    fn record_delivery(&mut self, target: &str) -> Result<()> {
+        if self.docs.is_none() {
+            return self.open.store.record_delivery(target);
+        }
+        let width = self.open.layout.width;
+        for path in self.annotated_files() {
+            if self.is_open(&path) {
+                self.open.store.record_delivery(target)?;
+            } else {
+                let mut open =
+                    Open::new(read_file(&path)?, width, &self.data_dir, &self.project, &self.render)?;
+                open.store.record_delivery(target)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// True when every annotated document in the set has been sent since it last changed.
+    fn set_all_delivered(&self) -> Result<bool> {
+        let files = self.annotated_files();
+        if files.is_empty() {
+            return Ok(false);
+        }
+        let width = self.open.layout.width;
+        for path in files {
+            let delivered = if self.is_open(&path) {
+                self.open.store.all_delivered()
+            } else {
+                Open::new(read_file(&path)?, width, &self.data_dir, &self.project, &self.render)?
+                    .store
+                    .all_delivered()
+            };
+            if !delivered {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 }

@@ -8,13 +8,13 @@ mod help;
 mod input;
 
 mod pick;
+mod review;
 mod selection;
 mod send;
 #[cfg(test)]
 mod tests;
 
 use std::collections::HashMap;
-use std::fmt::Write as _;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
@@ -25,7 +25,6 @@ use ratatui::layout::Rect;
 use crate::delivery::Delivery;
 use crate::doc::Document;
 use crate::docs::DocSet;
-use crate::export;
 use crate::layout::DocLayout;
 use crate::render::RenderSettings;
 use crate::store::{Location, Store};
@@ -394,145 +393,8 @@ impl App {
         Ok(())
     }
 
-    /// The feedback document for every placed annotation of the open file.
-    pub(crate) fn feedback(&self) -> String {
-        Self::feedback_for(&self.open, &self.open.source.name)
-    }
-
-    fn feedback_for(open: &Open, name: &str) -> String {
-        export::feedback(&open.doc.source, name, &Self::entries_for(open))
-    }
-
-    /// Just the annotation blocks, at `level` `#`s, for nesting under a document heading.
-    fn annotations_for(open: &Open, level: usize) -> String {
-        export::annotations(&open.doc.source, &Self::entries_for(open), level)
-    }
-
-    fn entries_for(open: &Open) -> Vec<export::Entry<'_>> {
-        let source = &open.doc.source;
-        open.store
-            .placed()
-            .into_iter()
-            .map(|p| export::Entry {
-                annotation: p.annotation,
-                lines: export::line_span(source, p.range),
-                range: p.range.clone(),
-            })
-            .collect()
-    }
-
-    /// Feedback for every annotated document in the set, one `# Annotations on <path>` block each.
-    pub(crate) fn set_feedback(&self) -> Result<String> {
-        let Some(set) = &self.docs else { return Ok(self.feedback()) };
-        let width = self.open.layout.width;
-        let mut out = String::new();
-        for path in self.annotated_files() {
-            let open = Open::new(read_file(&path)?, width, &self.data_dir, &self.project, &self.render)?;
-            let _ = writeln!(out, "{}", Self::feedback_for(&open, &Self::document_label(set, &path)));
-        }
-        Ok(if out.is_empty() { "No annotations.".to_owned() } else { out })
-    }
-
-    /// What to call `path` in a message: the tab's own name when it is in the set, so the agent
-    /// reads the same label that is on screen. Otherwise its path relative to the set's root.
-    fn document_label(set: &DocSet, path: &Path) -> String {
-        set.name_for(path).map_or_else(
-            || path.strip_prefix(set.root()).unwrap_or(path).display().to_string(),
-            ToOwned::to_owned,
-        )
-    }
-
-    /// The whole review `A` hands over: every open document, annotated or not.
-    ///
-    /// A document with nothing on it is reported as approved **in prose**. Writing a `LooksGood`
-    /// annotation instead would enter a note in the store and the feedback archive as though it
-    /// had been made by hand, and a later `--export` would replay it; this says the same thing to
-    /// the agent and leaves no record behind.
-    pub(crate) fn review_feedback(&self) -> Result<String> {
-        const APPROVED: &str = "looks good, no changes requested";
-        let Some(set) = &self.docs else {
-            return Ok(if self.open.store.has_placed() {
-                self.feedback()
-            } else {
-                format!("# Review of {}\n\n{APPROVED}.\n", self.open.source.name)
-            });
-        };
-        let width = self.open.layout.width;
-        let annotated = self.annotated_files();
-        let mut out = format!("# Review of {} documents\n\n", set.len());
-        for doc in set.docs() {
-            let label = Self::document_label(set, &doc.path);
-            if !annotated.contains(&doc.path) {
-                let _ = writeln!(out, "## {label} \u{2014} {APPROVED}\n");
-                continue;
-            }
-            let open = Open::new(read_file(&doc.path)?, width, &self.data_dir, &self.project, &self.render)?;
-            let _ = writeln!(out, "## {label}\n");
-            out.push_str(&Self::annotations_for(&open, 3));
-        }
-        Ok(out)
-    }
-
-    /// Paths of every annotated file a send covers: the project's records (which carry their
-    /// document path since 0.5.0) plus any document in the set with a count, so a record written
-    /// by an older build is still found.
-    ///
-    /// This is what `E`, `record_delivery` and `clear_sent` all walk. It used to come from the
-    /// tree's rows; it now comes from the set's counts, which `sync_doc_counts` keeps current.
-    fn annotated_files(&self) -> Vec<PathBuf> {
-        let Some(set) = &self.docs else { return Vec::new() };
-        let mut found = Store::annotated_documents(&self.data_dir, &self.project);
-        for doc in set.docs().iter().filter(|d| d.annotations > 0) {
-            found.push(doc.path.clone());
-        }
-        found.sort();
-        found.dedup();
-        found.retain(|p| p.is_file());
-        found
-    }
-
     fn is_open(&self, path: &Path) -> bool {
         matches!(&self.open.source.provenance, Provenance::File { path: p } if p == path)
-    }
-
-    /// Remember the send on every file it covered: the open one in memory, the rest on disk.
-    fn record_delivery(&mut self, target: &str) -> Result<()> {
-        if self.docs.is_none() {
-            return self.open.store.record_delivery(target);
-        }
-        let width = self.open.layout.width;
-        for path in self.annotated_files() {
-            if self.is_open(&path) {
-                self.open.store.record_delivery(target)?;
-            } else {
-                let mut open =
-                    Open::new(read_file(&path)?, width, &self.data_dir, &self.project, &self.render)?;
-                open.store.record_delivery(target)?;
-            }
-        }
-        Ok(())
-    }
-
-    /// True when every annotated document in the set has been sent since it last changed.
-    fn set_all_delivered(&self) -> Result<bool> {
-        let files = self.annotated_files();
-        if files.is_empty() {
-            return Ok(false);
-        }
-        let width = self.open.layout.width;
-        for path in files {
-            let delivered = if self.is_open(&path) {
-                self.open.store.all_delivered()
-            } else {
-                Open::new(read_file(&path)?, width, &self.data_dir, &self.project, &self.render)?
-                    .store
-                    .all_delivered()
-            };
-            if !delivered {
-                return Ok(false);
-            }
-        }
-        Ok(true)
     }
 
     fn clear_selection(&mut self) {
