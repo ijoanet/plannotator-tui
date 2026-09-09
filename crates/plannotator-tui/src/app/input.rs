@@ -16,7 +16,6 @@ impl App {
         match event {
             Event::Key(key) if key.kind != KeyEventKind::Release => match &self.mode {
                 Mode::Browse => self.browse_key(*key),
-                Mode::ConfirmQuit => self.confirm_quit_key(*key),
                 Mode::Pick => self.pick_key(*key),
                 Mode::Help => {
                     self.help_key(*key);
@@ -83,28 +82,6 @@ impl App {
         }
     }
 
-    /// The quit confirmation: send first, quit anyway, or stay.
-    fn confirm_quit_key(&mut self, key: KeyEvent) -> Result<()> {
-        match key.code {
-            KeyCode::Char('y' | 'Y') | KeyCode::Enter => {
-                self.mode = Mode::Browse;
-                // A refused send keeps the app open so the footer can say why. Only this send's
-                // outcome may decide that; the button's state could still be `Sent` from an
-                // earlier one.
-                if self.send_feedback()? {
-                    self.exit = Exit::Quit;
-                }
-            }
-            KeyCode::Char('n' | 'N') => {
-                self.mode = Mode::Browse;
-                self.exit = Exit::Quit;
-            }
-            KeyCode::Esc => self.mode = Mode::Browse,
-            _ => {}
-        }
-        Ok(())
-    }
-
     /// The keymap overlay is a reader, not a mode with actions: any of `?`, Esc or `q` leaves it,
     /// and `q` closes the list rather than the app so it cannot be a surprising way to quit.
     fn help_key(&mut self, key: KeyEvent) {
@@ -157,13 +134,10 @@ impl App {
             return Ok(());
         }
         match (key.code, key.modifiers) {
-            (KeyCode::Esc, _) => {
-                if self.pending.is_some() || self.selection.is_some() {
-                    self.clear_selection();
-                } else {
-                    self.request_quit();
-                }
-            }
+            // Esc cancels: it takes back a pending verdict or a half-made selection, and with
+            // nothing to cancel it does nothing. It used to quit, which is a trap now that `q`
+            // closes a tab - `Q` and ctrl+c are the ways out.
+            (KeyCode::Esc, _) => self.clear_selection(),
             (KeyCode::Char('v'), _) => {
                 self.clear_selection();
                 self.selection = Some(Selection::start(self.cursor));
@@ -288,7 +262,7 @@ impl App {
                             self.status = Some("annotation updated".into());
                         }
                     }
-                    Mode::Compose | Mode::Browse | Mode::ConfirmQuit | Mode::Pick | Mode::Help => {
+                    Mode::Compose | Mode::Browse | Mode::Pick | Mode::Help => {
                         if !body.is_empty()
                             && let Some(pending) = self.pending.take()
                         {

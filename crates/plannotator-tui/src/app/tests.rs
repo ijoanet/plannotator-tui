@@ -165,6 +165,28 @@ fn clicking_the_send_button_sends() {
     assert!(index.is_file(), "the send was archived under the test's own data dir");
 }
 
+/// Esc is the cancel key everywhere else here - clear the selection, leave the rail, close the
+/// overlay - so it must not also be an exit. It used to quit, which became a trap the moment `q`
+/// stopped quitting: the cancel key is where a hand reaches for "nothing happened".
+#[test]
+fn esc_cancels_what_is_pending_and_never_leaves_the_reviewer() {
+    let mut app = app(Box::new(Discard));
+    draw(&mut app);
+    app.handle_event(&click_at(5, 3)).expect("click");
+    app.handle_event(&click_at(5, 3)).expect("double click");
+    assert!(app.pending.is_some(), "a verdict is waiting on the toolbar");
+
+    app.handle_event(&key(KeyCode::Esc, KeyModifiers::NONE)).expect("esc");
+    assert!(app.pending.is_none(), "esc took the selection back");
+    assert_eq!(app.exit, super::Exit::Stay);
+
+    // With nothing to cancel it does nothing at all.
+    app.handle_event(&key(KeyCode::Esc, KeyModifiers::NONE)).expect("esc again");
+    assert_eq!(app.exit, super::Exit::Stay, "esc is not an exit");
+    assert_eq!(app.mode, Mode::Browse, "and asks no question either");
+    assert_eq!(app.open.doc.source, "# Plan\n\nfirst thing\n", "the document is still open");
+}
+
 fn candidates() -> Vec<plannotator_tui_hosts::Message> {
     use plannotator_tui_hosts::{Message, Role};
     let message = |id: &str, text: &str, at: &str| Message {

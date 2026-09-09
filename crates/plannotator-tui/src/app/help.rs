@@ -348,11 +348,7 @@ mod tests {
     use super::*;
 
     /// Keys the handler matches that are deliberately absent from the table, with the reason.
-    const EXEMPT: [&str; 11] = [
-        // The quit question owns the footer while it is up and names its own keys.
-        "y",
-        "Y",
-        "N",
+    const EXEMPT: [&str; 8] = [
         // Vim motions inside a visual selection; the overlay says "select text" rather than
         // teaching vim, and `w`/`b`/`0`/`$` are only live mid-drag.
         "w",
@@ -363,7 +359,7 @@ mod tests {
         "Backspace",
         "Char",
         "BackTab",
-        // ctrl+c, listed as `q`.
+        // ctrl+c, whose character is already listed as the comment key.
         "C",
     ];
 

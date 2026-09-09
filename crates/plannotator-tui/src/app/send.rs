@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
-use super::{App, Exit, Mode, Open, read_file};
+use super::{App, Exit, Open, read_file};
 use crate::delivery::{Clipboard, Delivery as _, DeliveryError};
 use crate::store::Store;
 use plannotator_tui_schema::{Kind, Provenance};
@@ -218,20 +218,6 @@ impl App {
                 SendState::Sent => "Copied".to_owned(),
                 SendState::Ready | SendState::Blocked(_) => format!("Copy {count} as feedback"),
             }
-        }
-    }
-
-    /// True when an agent is waiting on feedback that has not been sent since it changed.
-    pub(super) fn has_unsent(&self) -> bool {
-        self.delivery.is_agent() && self.send_count() > 0 && self.send_state != SendState::Sent
-    }
-
-    /// Quit, unless an agent is still waiting on feedback: then ask in the footer first.
-    pub(super) fn request_quit(&mut self) {
-        if self.has_unsent() {
-            self.mode = Mode::ConfirmQuit;
-        } else {
-            self.exit = Exit::Quit;
         }
     }
 

@@ -89,7 +89,7 @@ impl App {
             Mode::Browse if self.pending.is_some() => self.draw_toolbar(frame),
             Mode::Pick => self.draw_pick(frame),
             Mode::Help => self.draw_help(frame),
-            Mode::Browse | Mode::ConfirmQuit => {}
+            Mode::Browse => {}
         }
     }
 

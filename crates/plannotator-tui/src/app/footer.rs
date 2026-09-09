@@ -12,7 +12,7 @@ use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
 use super::draw::RAIL_MIN_TOTAL_WIDTH;
-use super::{App, Mode, help};
+use super::{App, help};
 
 /// Why the rail is missing, shown below `RAIL_MIN_TOTAL_WIDTH` when there is room for it.
 const RAIL_ADVICE: &str = "rail hidden: widen to \u{2265}80 cols";
@@ -27,16 +27,6 @@ pub(super) struct Status {
 
 impl App {
     pub(super) fn draw_footer(&self, frame: &mut Frame, area: Rect) {
-        if self.mode == Mode::ConfirmQuit {
-            // The question owns the footer: the browse help would name keys that are not
-            // live while it is up.
-            let question = format!(
-                " send feedback to {} before quitting? y send · n quit · esc cancel",
-                self.delivery.describe()
-            );
-            frame.render_widget(Paragraph::new(Line::from(Span::raw(question).bold())), area);
-            return;
-        }
         let status = self.footer_status(usize::from(area.width));
         let help = help::hint(self.focus, self.pending.is_some(), status.hint_room);
         let [left_area, right_area] =

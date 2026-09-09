@@ -55,8 +55,6 @@ enum Mode {
     Compose,
     /// Editing the body of an existing annotation (by id).
     Edit(String),
-    /// Quit was asked for while feedback is unsent; the footer asks first.
-    ConfirmQuit,
     /// Choosing which of the agent's recent messages to review.
     Pick,
     /// The `?` keymap overlay.
