@@ -140,6 +140,57 @@ pub(crate) struct TabRow {
     pub(crate) hidden_after: usize,
 }
 
+/// A document's path as the footer shows it: home-relative, and elided from the middle when it
+/// does not fit.
+///
+/// Elided from the middle rather than the end because the file name is the half worth keeping. A
+/// path cut from the right leaves `~/coding/platform/infra/car…`, which says least about which
+/// document is open, and the tab row already shows the bare name.
+pub(crate) fn display_path(path: &Path, home: Option<&Path>, room: usize) -> String {
+    let full = match home.and_then(|home| path.strip_prefix(home).ok()) {
+        Some(rest) => format!("~/{}", rest.display()),
+        None => path.display().to_string(),
+    };
+    if full.width() <= room || room == 0 {
+        return full;
+    }
+    let parts: Vec<String> = full.split('/').map(ToOwned::to_owned).collect();
+    let (head, rest) = parts.split_first().map_or((String::new(), &[][..]), |(h, r)| (h.clone(), r));
+    // Grow the tail from the file name backwards, keeping room for `<head>/…/`.
+    let mut tail: Vec<&str> = Vec::new();
+    for part in rest.iter().rev() {
+        let candidate = tail.iter().rev().fold(part.clone(), |acc, p| format!("{acc}/{p}"));
+        if format!("{head}/\u{2026}/{candidate}").width() > room && !tail.is_empty() {
+            break;
+        }
+        tail.push(part);
+    }
+    let tail: Vec<&str> = tail.into_iter().rev().collect();
+    let elided = format!("{head}/\u{2026}/{}", tail.join("/"));
+    if elided.width() <= room {
+        return elided;
+    }
+    // Not even the file name fits beside the head: drop the head, then cut the name itself.
+    let bare = format!("\u{2026}/{}", tail.join("/"));
+    if bare.width() <= room { bare } else { clip_end(&bare, room) }
+}
+
+/// Keep the last `room` columns, marking that the front was cut.
+fn clip_end(text: &str, room: usize) -> String {
+    let mut kept: Vec<char> = Vec::new();
+    let mut used = 1usize; // the leading ellipsis
+    for ch in text.chars().rev() {
+        let next = used + ch.to_string().width();
+        if next > room {
+            break;
+        }
+        kept.push(ch);
+        used = next;
+    }
+    let tail: String = kept.into_iter().rev().collect();
+    format!("\u{2026}{tail}")
+}
+
 /// Columns an edge marker needs: `‹12 ` and ` 12›` are both the digits plus two.
 pub(crate) fn marker_width(hidden: usize) -> usize {
     if hidden == 0 { 0 } else { 2 + hidden.to_string().len() }
@@ -390,6 +441,37 @@ mod tests {
         let row = tab_row(&widths, 0, 12);
         assert_eq!(row.visible, 0..1, "the open tab stays, for the caller to truncate");
         assert_eq!(row.hidden_after, 1);
+    }
+
+    #[test]
+    fn a_path_under_home_is_shown_against_a_tilde() {
+        let home = PathBuf::from("/Users/j");
+        let path = home.join("coding/plan.md");
+        assert_eq!(display_path(&path, Some(&home), 80), "~/coding/plan.md");
+        // Outside home there is nothing to shorten against, so it stays absolute.
+        assert_eq!(display_path(Path::new("/etc/plan.md"), Some(&home), 80), "/etc/plan.md");
+        assert_eq!(display_path(&path, None, 80), "/Users/j/coding/plan.md");
+    }
+
+    #[test]
+    fn a_path_too_long_is_elided_in_the_middle_and_keeps_its_file_name() {
+        let home = PathBuf::from("/Users/j");
+        let path = home.join("coding/platform/infra/cardprocessing/vpc/main.tf");
+        let shown = display_path(&path, Some(&home), 38);
+        assert!(shown.width() <= 38, "{shown:?} is wider than the room given");
+        assert!(shown.ends_with("main.tf"), "the file name is the half worth keeping: {shown:?}");
+        assert!(shown.starts_with('~'), "the root still says where it is: {shown:?}");
+        assert!(shown.contains('\u{2026}'), "the cut is marked: {shown:?}");
+    }
+
+    #[test]
+    fn a_room_too_small_for_the_file_name_still_never_overflows() {
+        let home = PathBuf::from("/Users/j");
+        let path = home.join("coding/a-very-long-document-name-indeed.md");
+        for room in 1..30 {
+            let shown = display_path(&path, Some(&home), room);
+            assert!(shown.width() <= room, "room {room}: {shown:?} overflows");
+        }
     }
 
     #[test]

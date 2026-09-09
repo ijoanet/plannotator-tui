@@ -10,7 +10,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
-use super::{App, Focus, GUTTER, Geometry, Mode, TOOLBAR, glyph, label};
+use super::{App, Focus, GUTTER, Geometry, Mode, TOOLBAR, glyph, help, label};
 use crate::docs::{DocSet, marker_width};
 use crate::wrap::wrap_line;
 
@@ -81,6 +81,7 @@ impl App {
             Mode::Edit(_) => self.draw_compose(frame, &self.compose_title("edit")),
             Mode::Browse if self.pending.is_some() => self.draw_toolbar(frame),
             Mode::Pick => self.draw_pick(frame),
+            Mode::Help => self.draw_help(frame),
             Mode::Browse | Mode::ConfirmQuit => {}
         }
     }
@@ -363,8 +364,7 @@ impl App {
         // The status leads: it is the transient half of the line, and the name and counters
         // it pushes right are on screen for the whole session anyway.
         let mut parts: Vec<String> = self.status.iter().cloned().collect();
-        parts.extend([
-            self.open.source.name.clone(),
+        let counters = [
             format!(
                 "{} annotations{}",
                 self.open.store.len(),
@@ -377,24 +377,33 @@ impl App {
                 }
                 None => format!("block {}/{}", self.selected + 1, self.open.doc.blocks.len()),
             },
-        ]);
+        ];
+        let help = help::hint(self.focus, self.pending.is_some());
+        let [left_area, right_area] =
+            Layout::horizontal([Constraint::Min(10), Constraint::Length(help.width() as u16)]).areas(area);
+
+        // The path takes whatever the status and counters leave, so a narrow pane elides the
+        // middle of the path instead of truncating the line's tail away.
+        if let Some(path) = self.document_path() {
+            let spent: usize = parts.iter().chain(counters.iter()).map(|p| p.width() + 3).sum::<usize>() + 1;
+            let room = usize::from(left_area.width).saturating_sub(spent);
+            let home = std::env::home_dir();
+            parts.push(crate::docs::display_path(&path, home.as_deref(), room));
+        } else {
+            parts.push(self.open.source.name.clone());
+        }
+        parts.extend(counters);
         if frame.area().width < RAIL_MIN_TOTAL_WIDTH {
             parts.push("rail hidden: widen to ≥80 cols".into());
         }
-        let help = match self.focus {
-            _ if self.pending.is_some() => "a looks good · c comment · d delete · esc clear ",
-            Focus::Rail => "j/k · e edit · x remove · esc · q quit ",
-            // "drag or" is dropped to make room for `A`: the status shares this line and must
-            // not be truncated away, which is why it is drawn first.
-            Focus::Document => "v select · c comment · E send · A send+close · q quit ",
-        };
-        let [left_area, right_area] =
-            Layout::horizontal([Constraint::Min(10), Constraint::Length(help.width() as u16)]).areas(area);
         frame.render_widget(
             Paragraph::new(Line::from(Span::raw(format!(" {}", parts.join(" · "))).dim())),
             left_area,
         );
-        frame.render_widget(Paragraph::new(Line::from(Span::raw(help).dim()).right_aligned()), right_area);
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::raw(help.clone()).dim()).right_aligned()),
+            right_area,
+        );
     }
 }
 
