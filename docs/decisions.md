@@ -505,8 +505,18 @@ table at every width.
 
 Cells come from `pulldown-cmark`'s event stream with source ranges, so this is not a second
 Markdown parser - and every rendered character keeps the byte it came from, which makes a
-selection inside a wide table work for the first time. Widths are display widths throughout, and a
-test asserts one offset entry per display column, because the selection map indexes by column.
+selection inside a wide table work for the first time. Widths are display widths throughout.
+
+**Corrected 2026-09-09.** This decision originally said a test asserts one offset entry per display
+column, "because the selection map indexes by column". That was wrong, and it was wrong in the
+direction that hides a bug. Two maps exist and they are indexed differently: `Row.cells` is
+per-column, because hit-testing takes a column; `LineOffsets` is per-**char**, because `cells_of`
+pulls one entry per char. Emitting the per-column form into the per-char path mis-anchors every
+character after a wide one, cumulatively, so selecting `x` in `echo 日x` stored `日`. The test
+asserted the intermediate (`offsets.len() == line.width()`) rather than the invariant, so it passed
+while the bug was live, and a later seat copied the same shape into the code-block renderer on the
+strength of this paragraph. The invariant to assert is behavioural: the byte under a given column is
+the byte of the character rendered at that column.
 
 Below `MIN_COLUMN` per column - six columns in thirty - no drawn table is readable, so one
 labelled record per row takes over, the way `psql \x` expands a wide result.
