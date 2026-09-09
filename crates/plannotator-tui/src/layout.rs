@@ -71,10 +71,13 @@ pub(crate) struct RenderedBlock {
     /// A code block, parsed once, laid out at every width. Code is always laid out here rather
     /// than clipped, so unlike a table this is not a fallback.
     code: Option<crate::code::CodeBlock>,
-    /// The narrow rendering for the current width, when `showing_source`.
-    source_view: Option<(Text<'static>, Vec<LineOffsets>)>,
-    /// Set during reflow when `source_view` is what the current width shows.
-    showing_source: bool,
+    /// What we laid out for the current width, when `laid_out_here` is set.
+    layout_view: Option<(Text<'static>, Vec<LineOffsets>)>,
+    /// Set during reflow when this block was laid out here rather than by `tui-markdown`.
+    ///
+    /// True for every code block, and for a table too wide to draw. Not a degraded mode: code is
+    /// always laid out here, and the name says who laid the block out, not how well.
+    laid_out_here: bool,
     /// Rows for the current width.
     pub(crate) rows: Vec<Row>,
     /// First screen row of this block in document coordinates.
@@ -86,12 +89,12 @@ impl RenderedBlock {
     /// (a narrow table, any code block) is already exactly as wide as the pane, so re-wrapping it
     /// is a no-op that would only risk moving its indentation.
     fn preserves_columns(&self) -> bool {
-        self.showing_source || self.art.is_some() || self.kind.preserves_columns()
+        self.laid_out_here || self.art.is_some() || self.kind.preserves_columns()
     }
 
     /// The text and offsets the current width shows.
     fn shown(&self) -> (&Text<'static>, &Vec<LineOffsets>) {
-        match (&self.source_view, self.showing_source) {
+        match (&self.layout_view, self.laid_out_here) {
             (Some((text, offsets)), true) => (text, offsets),
             _ => (&self.text, &self.offsets),
         }
@@ -182,8 +185,8 @@ impl DocLayout {
                     intrinsic_width,
                     table_source,
                     code,
-                    source_view: None,
-                    showing_source: false,
+                    layout_view: None,
+                    laid_out_here: false,
                     rows: Vec::new(),
                     first_row: 0,
                 }
@@ -214,19 +217,19 @@ impl DocLayout {
             // clipped. A table only when it does not fit. Both are width-dependent, so both are
             // redone when the width changes and left alone when it has not.
             if let Some(code) = &block.code {
-                if resample || block.source_view.is_none() {
-                    block.source_view = Some(code.to_text(width, theme));
+                if resample || block.layout_view.is_none() {
+                    block.layout_view = Some(code.to_text(width, theme));
                 }
             } else if block.intrinsic_width > width
                 && let Some((source, base)) = &block.table_source
             {
-                if resample || block.source_view.is_none() {
-                    block.source_view = crate::table::render(source, *base, width, theme);
+                if resample || block.layout_view.is_none() {
+                    block.layout_view = crate::table::render(source, *base, width, theme);
                 }
             } else {
-                block.source_view = None;
+                block.layout_view = None;
             }
-            block.showing_source = block.source_view.is_some();
+            block.laid_out_here = block.layout_view.is_some();
             let preserve = block.preserves_columns();
             let (text, offsets) = block.shown();
             let lines = text.lines.iter().zip(offsets);
@@ -379,7 +382,7 @@ mod tests {
         let doc = Document::parse(source.to_owned());
         // Narrow enough that the drawn table cannot fit, so `table` lays it out.
         let layout = DocLayout::build(&doc, 30, &RenderContext::text_only());
-        assert!(layout.blocks.first().is_some_and(|b| b.showing_source), "the table was laid out here");
+        assert!(layout.blocks.first().is_some_and(|b| b.laid_out_here), "the table was laid out here");
         let at = doc.source.find('Z').expect("Z is in the source");
 
         let (row_index, column) = find_drawn(&layout, 'Z');
@@ -488,7 +491,7 @@ mod tests {
         let mut layout = DocLayout::build(&doc, 200, &RenderContext::text_only());
 
         let block = layout.blocks.first().expect("one block");
-        assert!(!block.showing_source, "it fits at 200 columns");
+        assert!(!block.laid_out_here, "it fits at 200 columns");
         assert!(
             block.rows.iter().any(|r| r.line.to_string().contains('\u{250c}')),
             "and renders as a drawn table"
@@ -496,7 +499,7 @@ mod tests {
 
         layout.reflow(30);
         let block = layout.blocks.first().expect("one block");
-        assert!(block.showing_source, "it cannot fit at 30 columns");
+        assert!(block.laid_out_here, "it cannot fit at 30 columns");
         let shown: Vec<String> = block.rows.iter().map(|r| r.line.to_string()).collect();
         // What used to be clipped away is still on screen, and still maps to the source, so it
         // can be selected and quoted.
