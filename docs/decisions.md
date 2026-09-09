@@ -485,7 +485,35 @@ out not to help directly: an agent pane carries **no label of its own** (`pane g
 when the pane is unlabelled. `HerdrAgent` carries the name beside the pane, because delivery still
 addresses the pane — the name is only ever what the human is told.
 
-## 19. A sent review is cleared, once it is archived (2026-09-08)
+## 20. Tables are laid out here, not by tui-markdown (2026-09-08)
+
+`tui-markdown` sizes a table's columns from its content alone - `column_widths` is
+`max(cell.width())` - and `Options` has no width knob, so a table can never be asked to fit. A
+table preserves columns, so one wider than the pane was clipped: the tail of every row and the
+right border silently gone, and because clipping drops the cell map too, the lost text could not
+even be selected. Reading a table you cannot finish reading is the one thing a review pane must
+not do.
+
+Showing the block's raw Markdown instead was tried first. It loses nothing, and it is not a
+rendering - `| a | b |` wrapped over three lines is harder to read than the table was. Rejected on
+sight of it.
+
+So `table.rs` lays the table out: shrink the widest column by one until the row fits, then wrap
+each cell inside its column. One column at a time rather than a proportional formula, because
+"always shrink the widest" is a rule a reader can check against the output. The table stays a
+table at every width.
+
+Cells come from `pulldown-cmark`'s event stream with source ranges, so this is not a second
+Markdown parser - and every rendered character keeps the byte it came from, which makes a
+selection inside a wide table work for the first time. Widths are display widths throughout, and a
+test asserts one offset entry per display column, because the selection map indexes by column.
+
+Below `MIN_COLUMN` per column - six columns in thirty - no drawn table is readable, so one
+labelled record per row takes over, the way `psql \x` expands a wide result.
+
+Not yet honoured: cell alignment (`:---:`). Everything is left-aligned in the wrapped path.
+
+## 21. A sent review is cleared, once it is archived (2026-09-08)
 
 Decision 13 recorded the send so the button could say "Sent" after a restart. It left the
 annotations in place, which made every later send carry them again: an agent that had already

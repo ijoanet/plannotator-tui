@@ -5,6 +5,7 @@ Annotate Markdown in the terminal: select text, comment, 👍 looks good, ✗ de
 ```bash
 cargo build --release
 ./target/release/plannotator-tui samples/plugins.md     # one file
+./target/release/plannotator-tui a.md b.md              # a set: flat tree, Shift-Tab cycles
 ./target/release/plannotator-tui samples                # a folder: tree on the left
 ```
 
@@ -12,7 +13,7 @@ cargo build --release
 
 | Where | Keys |
 |---|---|
-| anywhere | `Tab` cycle focus (tree · document · rail) · `E` send feedback (clipboard) · `t` show/hide tree · `r` reload · `q` quit |
+| anywhere | `Tab` cycle focus (tree · document · rail) · `Shift-Tab` open the next document, wrapping · `E` send feedback (clipboard) · `t` show/hide tree · `r` reload · `q` quit |
 | document | drag with the mouse, or `v` then `hjkl` / `w` `b` / `0` `$` to select; `Enter` confirms · `j`/`k` or click selects a block · `c` comments on the block · `x` clears the block's annotations |
 | selection toolbar | `a` 👍 looks good · `c` 💬 comment (opens a box at the selection) · `d` ✗ delete · `Esc` clears |
 | rail | `j`/`k` move · `e` / `Enter` edit body · `x` remove · click a bubble to focus it |
@@ -70,3 +71,8 @@ per run, not once per fence (22 ms for the same file).
 - Every color is a `[theme]` token, and badges derive a readable foreground from their fill;
   diagram spans follow pi's mapping of the `grok-mermaid`
   classes, so a diagram can be made to look the same as in the agent that wrote it.
+- A table wider than the pane shrinks its columns and wraps its cells; too narrow for `MIN_COLUMN`
+  per column and it becomes one labelled record per row. Cell alignment (`:---:`) is not honoured
+  once cells wrap.
+- A sent review is cleared once archived (`[review] clear_on_send`), so the rail empties after a
+  send and the document widens again.

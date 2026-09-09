@@ -44,9 +44,10 @@ Prebuilt binaries for macOS, Linux and Windows are on the
 ## Use
 
 ```sh
-plannotator-tui docs/plan.md      # one file
-plannotator-tui docs               # a folder: file tree on the left, counts per file
-plannotator-tui last               # your coding agent's recent replies, pick one, annotate it
+plannotator-tui docs/plan.md            # one file
+plannotator-tui plan.md notes.md        # several: a set, cycled with Shift-Tab
+plannotator-tui docs                    # a folder: file tree on the left, counts per file
+plannotator-tui last                    # your coding agent's recent replies, pick one, annotate it
 ```
 
 Drag with the mouse (or `v` and move) to select, then `a` 👍 · `c` 💬 · `d` ✗. `E` copies the
@@ -55,7 +56,7 @@ review to the clipboard as numbered annotations (`# Annotations on plan.md`, `##
 
 | Where | Keys |
 |---|---|
-| anywhere | `Tab` cycle tree · document · notes; `E` send; `t` tree; `r` reload; `q` quit |
+| anywhere | `Tab` cycle tree · document · notes; `Shift-Tab` next document; `E` send; `t` tree; `r` reload; `q` quit |
 | document | `j`/`k` block; `c` comment on the block; `x` clear its annotations; `v` select with `hjkl` `w` `b` `0` `$` |
 | toolbar | `a` looks good · `c` comment · `d` delete · `Esc` |
 | notes | `j`/`k`; `e` edit; `x` remove; click a bubble |
@@ -120,6 +121,13 @@ regardless:
 [review]
 clear_on_send = false
 ```
+
+## Width
+
+The annotation rail is only reserved once a file has an annotation, so an unmarked document uses
+the whole pane. A table wider than the pane keeps its shape: columns shrink and cells wrap, rather
+than the tail being clipped away. Diagrams and images do not wrap - a narrow pane clips a diagram
+and re-samples an image.
 
 ## Colors
 
