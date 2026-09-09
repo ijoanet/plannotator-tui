@@ -27,6 +27,7 @@ ratatui = "0.30"
 # highlight-code pulls syntect + a C oniguruma build; plain code blocks keep the build pure Rust.
 tui-markdown = { version = "0.3.9", default-features = false }
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+syntect = { version = "5.3.0", default-features = false, features = ["parsing", "regex-fancy", "default-syntaxes", "yaml-load"] }
 
 [dev-dependencies]
 rusqlite = { version = "0.31.0", features = ["bundled"] }
