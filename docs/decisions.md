@@ -664,3 +664,33 @@ one is how a suite starts describing two different programs.
 
 The click test takes the span from `geometry` rather than guessing a column, so it cannot pass
 against an empty tab row. Verified by mutation: recording no spans fails it.
+
+## 27. Three modules left `app`, and two deliberately did not (2026-09-09)
+
+`app/mod.rs` had grown to 574 lines during work that *deleted* a module, and `draw.rs` to 410. Both
+are over the ~300 guideline, so three responsibilities left, each a pure move with no behaviour
+change and no test touched:
+
+- `app/compose_view.rs` (74) — the compose overlay draws a floating box over the document and knows
+  nothing about layout. Named for the view because `compose.rs` already holds the state.
+- `app/docset.rs` (126) — opening and switching documents in the set. A nameable invariant travels
+  with it: the open document, the set's focus, the send state and the viewport move together, or the
+  tab row describes something that is not on screen.
+- `app/headless.rs` (72) — the `--bench`, `--snapshot` and scripting helpers. Driven only by `cli.rs`
+  and tests; no keypress reaches them, and they are part of none of `App`'s invariants. `mod.rs` had
+  already fenced them off behind a section banner, which is a module boundary that had not been drawn.
+
+`draw.rs` is 355 and `mod.rs` 415, so **`mod.rs` is still over the guideline and stays that way.**
+Two further cuts were considered and refused, which is the part worth recording:
+
+- **`Open` and its constructor** would buy ~45 lines. It is *the* shared state: `review.rs`,
+  `send.rs`, `pick.rs` and `docset.rs` all construct it, and `mod.rs`'s stated job is the data they
+  share. Seeing `Open` beside `App` is how a reader learns what is swapped wholesale when a tab
+  changes. Moving it would cost that adjacency to buy a number.
+- **`docs.rs`'s tab row** is already one pure function taking widths and an index, knowing nothing
+  about `DocSet`. Extracting the only decoupled thing in the file would take it 327 → ~270 while
+  separating three tab-row tests from the naming tests they belong beside. If that file is ever
+  split, the folder walk is the better cut: ~60 lines of I/O in an otherwise pure module.
+
+The guideline says a file over ~300 lines is *a signal to split by responsibility*, not a limit to
+satisfy. Three responsibilities left; the rest of `mod.rs` is one.
