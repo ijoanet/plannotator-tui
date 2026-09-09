@@ -21,14 +21,23 @@ pub(crate) fn feedback(source: &str, name: &str, entries: &[Entry<'_>]) -> Strin
     if entries.is_empty() {
         return "No annotations.".to_owned();
     }
-    let mut out = format!("# Annotations on {name}\n\n");
+    format!("# Annotations on {name}\n\n{}", annotations(source, entries, 2))
+}
+
+/// The `## Annotation N` blocks alone, with their heading at `level` `#`s.
+///
+/// `level` exists so a review of several documents can put each document under a `##` of its own
+/// and its annotations under `###`, without the exporter growing a second copy of this loop.
+pub(crate) fn annotations(source: &str, entries: &[Entry<'_>], level: usize) -> String {
+    let mut out = String::new();
+    let heading = "#".repeat(level.max(1));
     for (i, entry) in entries.iter().enumerate() {
         let quoted = source.get(entry.range.clone()).unwrap_or("");
         let line_label = match entry.lines {
             (a, b) if a == b => format!("line {a}"),
             (a, b) => format!("lines {a}\u{2013}{b}"),
         };
-        let _ = writeln!(out, "## Annotation {} ({line_label})", i + 1);
+        let _ = writeln!(out, "{heading} Annotation {} ({line_label})", i + 1);
         let body = entry.annotation.body.trim();
         match entry.annotation.anchor.kind() {
             Kind::Delete => {

@@ -569,3 +569,55 @@ fn a_narrow_tab_row_keeps_the_open_document_and_counts_the_rest() {
     assert_eq!(tabs.chars().count(), 80, "the row is exactly the pane's width");
     std::fs::remove_dir_all(&root).expect("cleanup");
 }
+
+#[test]
+fn a_reports_a_clean_document_as_approved_without_inventing_an_annotation() {
+    let (_root, mut app) = set_app("clean-prose");
+    // Only one of the two documents is annotated; the other is clean.
+    app.add_block_annotation(0, Kind::Comment, "about one".to_owned()).expect("annotate one");
+
+    let review = app.review_feedback().expect("review");
+    assert!(review.starts_with("# Review of 2 documents"), "{review}");
+    assert!(review.contains("## one/doc.md\n"), "the annotated document keeps its own heading: {review}");
+    assert!(review.contains("about one"), "{review}");
+    assert!(
+        review.contains("## two/doc.md \u{2014} looks good, no changes requested"),
+        "the clean document is approved in prose: {review}"
+    );
+    // Annotations under a document sit one level deeper than the document heading.
+    assert!(review.contains("### Annotation 1 "), "{review}");
+
+    app.handle_event(&key(KeyCode::Char('A'), KeyModifiers::NONE)).expect("A");
+    assert_eq!(app.exit, super::Exit::QuitAndClosePane);
+    // The approval was prose. Nothing may have been written against the clean document, or a
+    // later --export would replay a note that was never made.
+    let clean = _root.join("two/doc.md");
+    let store = crate::store::Store::load(
+        &crate::store::Location::for_file(&app.data_dir, &app.project, &clean),
+        &crate::doc::Document::parse("# Two\n\nbeta\n".to_owned()),
+    )
+    .expect("load the clean document's record");
+    assert_eq!(store.len(), 0, "no annotation was invented for the approved document");
+}
+
+#[test]
+fn a_hands_over_an_entirely_clean_set_where_e_has_nothing_to_send() {
+    let (_root, mut app) = set_app("all-clean");
+    assert_eq!(app.send_count(), 0, "nothing is annotated");
+
+    // E has nothing to say, so it says nothing rather than sending "No annotations.".
+    assert!(!app.send_feedback().expect("E"), "E does not deliver an empty review");
+    assert_eq!(app.exit, super::Exit::Stay);
+
+    // A still hands the set over: "I read all of it, it is fine" is the point of A.
+    app.handle_event(&key(KeyCode::Char('A'), KeyModifiers::NONE)).expect("A");
+    assert_eq!(app.exit, super::Exit::QuitAndClosePane, "A sends and closes even with nothing marked");
+    assert_eq!(app.send_state, SendState::Sent);
+}
+
+#[test]
+fn a_lone_clean_document_is_approved_by_name() {
+    let mut app = app(Box::new(Discard));
+    let review = app.review_feedback().expect("review");
+    assert_eq!(review, "# Review of plan.md\n\nlooks good, no changes requested.\n");
+}
