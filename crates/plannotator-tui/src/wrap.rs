@@ -45,21 +45,23 @@ fn cells_of(line: &Line<'_>, offsets: &[Option<usize>]) -> Vec<Cell> {
 /// layout decides characters and colors, and this module turns them into spans.
 pub(crate) type Painted = (char, Option<usize>, Style);
 
-/// Collapse painted characters into a styled line and its per-column offset map.
+/// Collapse painted characters into a styled line and its per-character offset map.
 ///
-/// Same-style runs merge into one span, and every entry of the map is one *display* column, not
-/// one character, because the selection map is indexed by column and a wide character covers two.
+/// Same-style runs merge into one span, and the map has one entry per *character*, because that
+/// is what [`LineOffsets`](crate::srcmap::LineOffsets) means and what `cells_of` consumes: one
+/// entry per char of the line. The column-indexed map is [`Row::cells`], which `finish_row`
+/// produces later by repeating each character's offset across the columns it covers.
 pub(crate) fn paint(painted: &[Painted]) -> (Line<'static>, Vec<Option<usize>>) {
     let mut spans: Vec<Span<'static>> = Vec::new();
-    let mut columns: Vec<Option<usize>> = Vec::new();
+    let mut chars: Vec<Option<usize>> = Vec::new();
     for &(ch, at, style) in painted {
         match spans.last_mut() {
             Some(last) if last.style == style => last.content.to_mut().push(ch),
             _ => spans.push(Span::styled(ch.to_string(), style)),
         }
-        columns.extend(std::iter::repeat_n(at, display_width(ch).max(1)));
+        chars.push(at);
     }
-    (Line::from(spans), columns)
+    (Line::from(spans), chars)
 }
 
 /// Columns a character occupies on screen.

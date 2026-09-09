@@ -323,6 +323,65 @@ mod tests {
         assert_eq!(layout.rendered_in_range(&doc.source, &bold_range), "login page");
     }
 
+    /// The display column at which `needle` is drawn in `row`, counting wide characters as two.
+    fn column_of(row: &Row, needle: char) -> Option<usize> {
+        let mut column = 0usize;
+        for ch in row.line.to_string().chars() {
+            if ch == needle {
+                return Some(column);
+            }
+            column += crate::wrap::display_width(ch);
+        }
+        None
+    }
+
+    /// The row that draws `needle`, with the column it is drawn at.
+    fn find_drawn(layout: &DocLayout, needle: char) -> (usize, usize) {
+        for (index, row) in layout.blocks.iter().flat_map(|b| b.rows.iter()).enumerate() {
+            if let Some(column) = column_of(row, needle) {
+                return (index, column);
+            }
+        }
+        unreachable!("{needle} is drawn somewhere")
+    }
+
+    /// A character after a wide one must still map to its own byte.
+    ///
+    /// The map the layout hands to `wrap` is per rendered character, and a wide character is one
+    /// character across two columns. Emitting one entry per *column* instead shifts every
+    /// character after the first wide one, so a selection quotes its neighbour.
+    #[test]
+    fn a_wide_character_does_not_shift_a_code_block_source_map() {
+        let doc = Document::parse("```bash\necho 日Z\n```\n".to_owned());
+        let layout = DocLayout::build(&doc, 60, &RenderContext::text_only());
+        let at = doc.source.find('Z').expect("Z is in the source");
+
+        let (row_index, column) = find_drawn(&layout, 'Z');
+        let row = layout.blocks.iter().flat_map(|b| b.rows.iter()).nth(row_index).expect("the row");
+        assert_eq!(
+            row.cells.get(column).copied().flatten(),
+            Some(at),
+            "the column drawing Z maps to Z's byte"
+        );
+        assert_eq!(layout.rendered_in_range(&doc.source, &(at..at + 1)), "Z", "and quotes Z, not 日");
+    }
+
+    /// The same invariant through the other hand-laid-out block.
+    #[test]
+    fn a_wide_character_does_not_shift_a_narrow_table_source_map() {
+        let source = "| Key | Meaning |\n|---|---|\n| 日Z | a value long enough not to fit |\n";
+        let doc = Document::parse(source.to_owned());
+        // Narrow enough that the drawn table cannot fit, so `table` lays it out.
+        let layout = DocLayout::build(&doc, 30, &RenderContext::text_only());
+        assert!(layout.blocks.first().is_some_and(|b| b.showing_source), "the table was laid out here");
+        let at = doc.source.find('Z').expect("Z is in the source");
+
+        let (row_index, column) = find_drawn(&layout, 'Z');
+        let row = layout.blocks.iter().flat_map(|b| b.rows.iter()).nth(row_index).expect("the row");
+        assert_eq!(row.cells.get(column).copied().flatten(), Some(at), "the column drawing Z maps to it");
+        assert_eq!(layout.rendered_in_range(&doc.source, &(at..at + 1)), "Z");
+    }
+
     /// A scratch directory holding one opaque PNG of `size` × `size` pixels.
     fn image_dir(name: &str, size: u32) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("plannotator-tui-layout-{}-{name}", std::process::id()));

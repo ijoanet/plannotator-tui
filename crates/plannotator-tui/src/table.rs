@@ -355,8 +355,10 @@ mod tests {
             let (text, offsets) = render(TABLE, 0, width, Theme::default()).expect("renders");
             for (index, line) in text.lines.iter().enumerate() {
                 assert!(line.width() <= width, "line {index} at width {width}: {line:?}");
-                // One offset entry per display column, which the selection map relies on.
-                assert_eq!(offsets.get(index).map(Vec::len), Some(line.width()));
+                // One entry per rendered character, per `LineOffsets`. The column-to-character
+                // invariant is asserted through `DocLayout` in `layout`'s tests.
+                let chars: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
+                assert_eq!(offsets.get(index).map(Vec::len), Some(chars));
             }
         }
     }

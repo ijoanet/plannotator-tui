@@ -292,9 +292,12 @@ mod tests {
         let source = format!("```bash\n{LONG}\n```");
         let base = 500;
         let (text, offsets) = parse(&source, base).expect("a code block").to_text(40, Theme::default());
-        // Every row maps one entry per display column, which the selection map indexes by.
+        // One entry per rendered character, which is what `LineOffsets` means. Asserting the
+        // column count here is what let a wide-character shift through; the invariant that a
+        // column maps to the character drawn at it lives in `layout`'s tests.
         for (index, line) in text.lines.iter().enumerate() {
-            assert_eq!(offsets.get(index).map(Vec::len), Some(line.width()), "row {index}");
+            let chars: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
+            assert_eq!(offsets.get(index).map(Vec::len), Some(chars), "row {index}");
         }
         // A character on a continuation row still points at its own byte in the source.
         let last = offsets.last().expect("rows");
