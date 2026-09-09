@@ -17,7 +17,7 @@ bound without being described there. Do not hand-write a key list anywhere else.
 
 | Where | Keys |
 |---|---|
-| anywhere | `?` this list · `Tab` next document · `n` notes · `E` send annotations · `A` send all, approve, close · `r` reload from disk · `p` pick another reply · `q` quit |
+| anywhere | `?` this list · `Tab` next document · `n` notes · `E` send annotations · `A` send all, approve, close · `q` close this tab (leaves when it is the last) · `Q` leave, sending nothing · `ctrl+c` leave, keeping the pane · `r` reload from disk · `p` pick another reply |
 | document | `j`/`k` block by block · `g`/`G` first / last block · `h`/`l` move the cursor · `ctrl+d`/`ctrl+u` half a page · `v` select text · `c` comment on block · `x` clear block notes · drag to select |
 | selection | `a` looks good · `c` comment · `d` delete this · `esc` clear the selection |
 | notes | `j`/`k` note by note · `e` edit the note · `x` remove the note · `esc` back to the document |

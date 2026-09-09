@@ -53,14 +53,19 @@ plannotator-tui last                    # your coding agent's recent replies, pi
 Drag with the mouse (or `v` and move) to select, then `a` 👍 · `c` 💬 · `d` ✗. `E` sends the review
 as numbered annotations (`# Annotations on plan.md`, `## Annotation 1 (line 12)`, …). `A` hands over
 the whole set, approving the documents you left unmarked, and closes. Every annotation is saved as
-JSON the moment you make it; `q` closes.
+JSON the moment you make it.
+
+`q` closes the current tab, which is how you **exclude** a document from `A`: clean up the tabs you
+do not want in the review, then press `A` to approve the rest. Closing a tab never loses anything,
+since annotations are already on disk, but it does leave that document's notes unsent, and the status
+line says so. `q` on the last tab leaves, as does `Q` at any time, sending nothing.
 
 **`?` lists every key.** The table below is generated from the same source the overlay and the
 footer hint read, so it cannot drift from the bindings.
 
 | Where | Keys |
 |---|---|
-| anywhere | `?` this list · `Tab` next document · `n` notes · `E` send annotations · `A` send all, approve, close · `r` reload · `p` pick another reply · `q` quit |
+| anywhere | `?` this list · `Tab` next document · `n` notes · `E` send annotations · `A` send all, approve, close · `q` close this tab · `Q` leave, sending nothing · `r` reload · `p` pick another reply |
 | document | `j`/`k` block by block · `g`/`G` first / last · `h`/`l` cursor · `ctrl+d`/`u` half a page · `v` select · `c` comment on block · `x` clear its notes · drag to select |
 | selection | `a` looks good · `c` comment · `d` delete this · `esc` clear |
 | notes | `j`/`k` note by note · `e` edit · `x` remove · `esc` back to the document |

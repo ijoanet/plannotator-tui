@@ -694,3 +694,34 @@ Two further cuts were considered and refused, which is the part worth recording:
 
 The guideline says a file over ~300 lines is *a signal to split by responsibility*, not a limit to
 satisfy. Three responsibilities left; the rest of `mod.rs` is one.
+
+## 28. `q` closes a tab, and leaving is its own key (2026-09-09)
+
+`q` quitting the reviewer wasted the most reachable key on the least frequent action, and left no way
+to say "not this document" short of never presenting it. So `q` closes the current tab, which is how
+a document is **excluded from `A`**: clean up the tabs you do not want in the review, then approve the
+rest. On the last remaining tab, and for a source with no set at all (stdin, a single file, a `last`
+reply), there is nothing left to review, so it leaves and takes the pane with it, matching `A`.
+
+Nothing is lost by closing a tab: annotations are written to disk when made. But the closed
+document's notes go **unsent**, and `A` will not mention it, so the status line names the file and how
+many annotations it left behind. Silent exclusion would be the same defect class as an invented
+approval.
+
+`Q` leaves and closes the pane, sending nothing: `:qa!` for a reviewer, except nothing is discarded.
+
+Two adjacent keys had to be decided because `request_quit` turned out to have **three** callers, not
+one:
+
+- `ctrl+c` leaves without closing the pane, deliberately distinct from `Q`. `present.sh` finds a
+  viewer by label, so a pane left open is reused next time: `ctrl+c` is "get me out, keep the pane".
+- `Esc` with nothing pending now does **nothing**. It is the cancel key in every other mode here, it
+  was never documented as a quit, and it became a trap the moment `q` stopped quitting, because
+  muscle memory reaches for it expecting "nothing happened".
+
+The quit confirmation went with them. It existed to ask before discarding unsent work; with `q`
+closing a tab and `Q` unconditional, nothing could enter that mode, and a state nobody can reach is a
+state nobody maintains. Removing it also cleared three `EXEMPT` entries for keys no handler produced.
+
+One inconsistency is left standing knowingly: inside the reply picker, `q` still quits. A picker has
+no tabs, and `Esc` already dismisses it.

@@ -109,6 +109,20 @@ Four, and each must be survivable when absent:
 
 ## Review, and what leaves
 
+Four keys leave or narrow the review, and the distinctions between them are the feature:
+
+| Key | Sends | Pane |
+|---|---|---|
+| `q` | no | closes the **tab**; leaves and closes the pane only when it was the last |
+| `Q` | no | closes it |
+| `ctrl+c` | no | **left alone**, so `present.sh` finds it by label and reuses it |
+| `A` | the whole set | closes it |
+
+`q` closing a tab is how a document is **excluded** from `A`: clean up, then approve the rest.
+Nothing is lost, because annotations are written when made, but the excluded document's notes go
+unsent and the status line says so. `Esc` cancels what is pending and never leaves: it is the cancel
+key everywhere else here, so quitting on it was a trap once `q` stopped quitting.
+
 `E` sends the annotations. `A` hands over the whole set and closes the pane: annotated documents
 contribute their notes, unmarked ones arrive as approvals **in prose, never as invented
 `LooksGood` records** (decision 22, and the test that pins it is the most important one in the
