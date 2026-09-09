@@ -11,13 +11,16 @@ cargo build --release
 
 ## Keys
 
+`?` shows this list in the app. Both it and the footer hint render from `KEYS` in `src/app/help.rs`,
+and a test walks `input.rs`, `compose.rs`, `pick.rs` and `help.rs` to fail the build if a key is
+bound without being described there. Do not hand-write a key list anywhere else.
+
 | Where | Keys |
 |---|---|
-| anywhere | `Tab` cycle focus (tree · document · rail) · `Shift-Tab` open the next document, wrapping · `E` send feedback (clipboard) · `t` show/hide tree · `r` reload · `q` quit |
-| document | drag with the mouse, or `v` then `hjkl` / `w` `b` / `0` `$` to select; `Enter` confirms · `j`/`k` or click selects a block · `c` comments on the block · `x` clears the block's annotations |
-| selection toolbar | `a` 👍 looks good · `c` 💬 comment (opens a box at the selection) · `d` ✗ delete · `Esc` clears |
-| rail | `j`/`k` move · `e` / `Enter` edit body · `x` remove · click a bubble to focus it |
-| tree | `j`/`k` move · `Enter` open · `E` send feedback for every annotated file · counts show per file |
+| anywhere | `?` this list · `Tab` next document · `n` notes · `E` send annotations · `A` send all, approve, close · `r` reload from disk · `p` pick another reply · `q` quit |
+| document | `j`/`k` block by block · `g`/`G` first / last block · `h`/`l` move the cursor · `ctrl+d`/`ctrl+u` half a page · `v` select text · `c` comment on block · `x` clear block notes · drag to select |
+| selection | `a` looks good · `c` comment · `d` delete this · `esc` clear the selection |
+| notes | `j`/`k` note by note · `e` edit the note · `x` remove the note · `esc` back to the document |
 
 Selections and exports are copied to the terminal clipboard (OSC 52).
 
@@ -51,12 +54,21 @@ plannotator-tui --snapshot <file|folder> [cols rows scroll] [select-quote]   # o
 | corpus | blocks | rows | render + align | reflow on resize | row lookup |
 |---|---|---|---|---|---|
 | plugins.md (16 KB) | 60 | 305 | 14 ms | 0.7 ms | 20 ns |
-| big.md (2.5 MB, 50k lines) | 14,100 | 56,999 | 352 ms | 50 ms | 15 ns |
-| 20 Mermaid diagrams | 41 | 181 | 79 ms | 0.1 ms | — |
+| big.md (2.5 MB, 50k lines) | 14,100 | 54,779 | 487 ms | 68-88 ms | 15 ns |
+| 20 Mermaid diagrams | 41 | 181 | 79 ms | 0.1 ms | - |
 
 Per frame, only visible rows are touched. The diagram figure is one Node process for the whole
-document; it was 1375 ms when each fence spawned its own. A machine with no Node spawns once
-per run, not once per fence (22 ms for the same file).
+document; it was 1375 ms when each fence spawned its own, and a machine with no Node spawns once per
+run rather than once per fence.
+
+`big.md` is a stress corpus, not a typical document: it holds ~2,800 fenced code blocks, so syntax
+highlighting dominates its render (487 ms with highlighting, 320 ms with `[code] highlight = false`).
+Highlighting stops after `HIGHLIGHT_CEILING` blocks per document so a pathological file stays
+bounded; a document with twenty blocks pays about 3 ms. Reflow does not re-highlight.
+
+The binary is ~7.5 MB, of which ~2.5 MB is syntect and its syntax dumps. That is the cost of
+highlighting, and `[code] highlight = false` does not reclaim it: only building without the
+dependency would.
 
 ## Known limits
 
@@ -76,3 +88,8 @@ per run, not once per fence (22 ms for the same file).
   once cells wrap.
 - A sent review is cleared once archived (`[review] clear_on_send`), so the rail empties after a
   send and the document widens again.
+- The gutter's first column is the change bar and the second the block marker, so a very narrow pane
+  shows both in two columns and neither can be turned into more room.
+- `[git] signs` reads `git diff HEAD` once per document open and once per `r`. A huge repository
+  makes that first read slower; it is never done while drawing.
+- Below about 23 columns the footer drops the annotation count to keep the document named.

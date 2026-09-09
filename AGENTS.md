@@ -11,6 +11,8 @@ crates/plannotator-tui-schema   annotation + anchor types and resolvers. Wire-ex
 crates/plannotator-tui          the app: parse → layout → draw → input. Talks to the schema crate,
                           never the other way round. Network clients live in their own
                           modules behind a trait so the app has one seam per external system.
+                          There is no file tree: documents arrive as a set (`src/docs.rs`) and
+                          show one tab each. It is a tool agents present to, not one to browse.
 herdr/                    the Herdr plugin manifest. The launcher it runs is
                           `plannotator-tui herdr open` (src/herdr/); no shell logic here.
 ```
@@ -22,7 +24,8 @@ interpret markdown ourselves. Anything that needs to know "what is a heading" is
 columns are sized from content there with no notion of the pane, and `Options` has no width knob,
 so a wide table could only be clipped. Cells still come from `pulldown-cmark`'s event stream with
 source ranges - this is a layout, not a second parser. Widths are display widths, and every
-rendered character keeps its source byte, because the selection map indexes by column. Decision 20.
+rendered character keeps its source byte. Which map is indexed by what is spelled out below, and
+getting it wrong is how a shipped bug survived a green test. Decision 20.
 
 `src/theme.rs` owns every color, one token per meaning; nothing else may name a color. `src/render.rs`
 carries what rendering needs from outside the layout (theme, art settings, the document's directory),
@@ -38,6 +41,21 @@ a hang all fall back to the plain code block. Detection still goes through `pull
 `src/art/obsidian.rs` is the **only** sanctioned exception to "we never interpret markdown
 ourselves", because `![[x.png]]` is not markdown and `pulldown-cmark` will never report it. It is
 off by default and must stay that way. Any other hand-parsing of markup is still a bug. Decision 18.
+
+`src/git.rs` is the only place that runs git for content (`workspace_paths.rs` runs it for the repo
+name). Its parser is pure and its runner is infallible: no repository, no `HEAD`, or a git that will
+not run means no bars, never an error. A document must render with git absent. Decision 24.
+
+`src/app/help.rs` holds `KEYS`, the one description of every binding. The overlay and the footer
+hint both render from it, and a test walks `input.rs`, `compose.rs`, `pick.rs` and `help.rs` to fail
+the build when a key is bound without being described. Never hand-write a key list elsewhere: the
+footer used to be prose, and it advertised `t hide` for a tree that had been deleted. Decision 25.
+
+Two source maps exist and they are indexed differently. `LineOffsets` is per rendered **char**,
+because `cells_of` pulls one entry per char; `Row.cells` is per display **column**, because
+hit-testing takes a column. Producing one where the other is expected mis-anchors every character
+after a wide one, cumulatively, and the test that hid it asserted a length. Assert the behaviour: the
+byte under a column belongs to the character drawn at that column. Decision 20.
 
 ## Rules that are enforced (see `Cargo.toml` workspace lints)
 

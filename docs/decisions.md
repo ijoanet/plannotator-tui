@@ -546,3 +546,91 @@ was never in the feedback, so clearing it would discard something nobody has rea
 
 `[review] clear_on_send` turns it off, because this is a divergence from decision 13 rather than a
 correction of it: someone who wants the reviewer to keep showing what was sent can have that.
+
+## 22. The reviewer is for agents to present to, so the tree is gone (2026-09-09)
+
+The file tree was the last thing in the app that existed for browsing. Joan does not browse it:
+agents present documents to it, and he reviews what arrived. So the tree is deleted rather than
+hidden, and documents arrive as a **set** with one tab each above the header, `Tab` walking them
+forward with a wrap. `Shift-Tab` was specified and then dropped: forward-only is enough for a handful
+of documents, and the key is better spent elsewhere.
+
+Tabs are named by file and grow a parent component only for the members of a colliding group, the way
+editors disambiguate, so `plan.md` beside `notes.md` stays short even when two other documents in the
+set collide. The footer spells out the whole path, home-relative, elided in the middle so the
+basename survives: losing the file name would leave the least useful half of a path on screen.
+
+A folder argument still works, expanding to the markdown files beneath it, because the CLI contract
+predates this and a folder is a reasonable thing to hand over.
+
+What made this more than deletion: the tree's row list was the **file list**. `E`, `record_delivery`
+and `clear_sent` all walked it to find annotated files, and it fed per-file counts. Deleting it
+without replacing that list would have made sends silently stop covering files, which is why
+`docs.rs` owns it now and a test pins that every document is covered.
+
+Tabs sit above the header, not below, because that is where nvim's tabline is and the reference was
+explicit. The row is hidden entirely for a single document, so presenting one file costs no chrome.
+
+## 23. Code blocks are laid out here too, and highlighted (2026-09-09)
+
+`tui-markdown` rendered the fence as literal ```` ```bash ```` text (the `code_block_fence` hook was
+never overridden) and a code block preserves columns, so a 138-character command showed 58 characters
+and looked complete. A truncated shell command that looks whole is something you might copy and run.
+
+So code blocks join tables in being laid out here: the fence is hidden, the language becomes a dim
+label, a left rule marks the block, and long lines **wrap at the column edge** with a dim marker on
+continuation rows. Breaking exactly at the edge keeps the characters unchanged, so a copy is the whole
+command; breaking at spaces would read as if a quoted string had ended.
+
+Highlighting is syntect, added **directly** and never through `tui-markdown`'s `highlight-code`
+feature: that declares `syntect` with default features, which pulls oniguruma (C), and feature
+unification means it cannot be switched off downstream. Direct with `regex-fancy` is pure Rust,
+verified by the absence of `onig` and `bindgen` from the tree.
+
+It costs ~2.5 MB of binary, measured with the dependency actually exercised. An earlier measurement
+said +0 KB because nothing referenced it yet and LTO had stripped it: a dependency's cost cannot be
+measured until something calls it.
+
+`default-syntaxes` lacks HCL, Terraform and TOML, which are exactly what this vault reviews, so those
+`.sublime-syntax` files are vendored with their source and licence recorded. Scopes map onto the nine
+`syntax*` tokens pi already defines, so a block looks the same here as in the agent that wrote it.
+
+`HIGHLIGHT_CEILING` bounds the work per document, because a 2,800-block stress corpus otherwise pays
+unbounded cost; past the ceiling a block keeps its label, its layout and its source map, and loses
+only colour. `[code] highlight = false` turns it off, though it cannot reclaim the binary size.
+
+## 24. What changed is measured against `HEAD`, and git may be absent (2026-09-09)
+
+The gutter's first column bars what differs from `HEAD`, so a review starts from what the agent
+touched. `HEAD` rather than "as first presented", because that is what "changed since the last
+commit" means and it covers staged and unstaged together. The block marker moves to the second
+gutter column; the gutter was already two wide with one column unused, so nothing grew.
+
+Four kinds, four theme tokens, not reusing the annotation kinds: added, changed, deleted drawn on the
+row **following** the gap since a removed line has no row, and untracked in its own colour.
+
+Untracked means git has never been told about the file, **not** absent from `HEAD`. Keying on `HEAD`
+membership reported every `git add`ed file as untracked, when it is tracked and its lines are added,
+which is what `gitsigns.nvim` shows and the whole reason untracked has a separate colour. A tracked
+file in a repository before its first commit is all added: nothing to diff against, so every line is
+new rather than unknown.
+
+The parser is pure and the runner infallible. No repository, no `HEAD`, or no git at all gives no
+bars and never an error, because a document must still render on a machine without git. One read per
+document open and per `r`, never while drawing.
+
+## 25. One table describes every key (2026-09-09)
+
+The footer hint was hand-written prose in `draw.rs`, so it could disagree with the bindings, and it
+did: it advertised `t hide` for a tree that had been deleted. The keys had also multiplied past the
+point where a footer could carry them.
+
+`KEYS` in `src/app/help.rs` is now the single description. The `?` overlay and the footer hint both
+render from it, and a test walks `input.rs`, `compose.rs`, `pick.rs` and `help.rs` for every key the
+handler answers to, failing the build when one is bound but not described. The exemption list carries
+a reason per entry.
+
+The overlay must **admit what it cannot show**. Its first version silently clipped two groups in a
+short pane, which is precisely the drift the module exists to prevent, only worse: a help screen that
+looks complete and is not. Scrolling is not required for a keymap; honest disclosure is, so shown
+plus admitted always equals the total.

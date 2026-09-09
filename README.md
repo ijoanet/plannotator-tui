@@ -45,22 +45,29 @@ Prebuilt binaries for macOS, Linux and Windows are on the
 
 ```sh
 plannotator-tui docs/plan.md            # one file
-plannotator-tui plan.md notes.md        # several: a set, cycled with Shift-Tab
-plannotator-tui docs                    # a folder: file tree on the left, counts per file
+plannotator-tui plan.md notes.md        # several: a set, one tab each
+plannotator-tui docs                    # a folder: its markdown files, as a set
 plannotator-tui last                    # your coding agent's recent replies, pick one, annotate it
 ```
 
-Drag with the mouse (or `v` and move) to select, then `a` 👍 · `c` 💬 · `d` ✗. `E` copies the
-review to the clipboard as numbered annotations (`# Annotations on plan.md`, `## Annotation 1
-(line 12)`, …). Every annotation is saved as JSON the moment you make it; `q` closes.
+Drag with the mouse (or `v` and move) to select, then `a` 👍 · `c` 💬 · `d` ✗. `E` sends the review
+as numbered annotations (`# Annotations on plan.md`, `## Annotation 1 (line 12)`, …). `A` hands over
+the whole set, approving the documents you left unmarked, and closes. Every annotation is saved as
+JSON the moment you make it; `q` closes.
+
+**`?` lists every key.** The table below is generated from the same source the overlay and the
+footer hint read, so it cannot drift from the bindings.
 
 | Where | Keys |
 |---|---|
-| anywhere | `Tab` cycle tree · document · notes; `Shift-Tab` next document; `E` send; `t` tree; `r` reload; `q` quit |
-| document | `j`/`k` block; `c` comment on the block; `x` clear its annotations; `v` select with `hjkl` `w` `b` `0` `$` |
-| toolbar | `a` looks good · `c` comment · `d` delete · `Esc` |
-| notes | `j`/`k`; `e` edit; `x` remove; click a bubble |
-| tree | `j`/`k`; `Enter` open; `E` sends every annotated file |
+| anywhere | `?` this list · `Tab` next document · `n` notes · `E` send annotations · `A` send all, approve, close · `r` reload · `p` pick another reply · `q` quit |
+| document | `j`/`k` block by block · `g`/`G` first / last · `h`/`l` cursor · `ctrl+d`/`u` half a page · `v` select · `c` comment on block · `x` clear its notes · drag to select |
+| selection | `a` looks good · `c` comment · `d` delete this · `esc` clear |
+| notes | `j`/`k` note by note · `e` edit · `x` remove · `esc` back to the document |
+
+There is no file tree. Documents arrive as a set, one tab per document above the header, and `Tab`
+walks them. Tabs are named by file, growing to a parent directory only when two would collide; the
+footer spells out the whole path. The gutter bars what changed since `HEAD` (see below).
 
 ## Diagrams and images
 
@@ -136,8 +143,10 @@ review starts from what the agent actually touched. Measured with `git diff -U0 
 covers staged and unstaged work together, once when a document opens and again on `r` - never
 while it is being drawn. Four colours: added, changed, and deleted on the row *after* the gap,
 since a removed line has no row of its own. A file git has never seen is untracked on every
-line, in its own colour rather than being reported as added. A document outside a repository,
-or in one with no commit yet, simply gets no bars.
+line, in its own colour rather than being reported as added. A file git has been told about but
+never committed is *added*, not untracked, so staging a new file changes its colour. In a
+repository before its first commit every line is added, because there is nothing to compare
+against. A document outside a repository gets no bars at all.
 
 ```toml
 [git]
