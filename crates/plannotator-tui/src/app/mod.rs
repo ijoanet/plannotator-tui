@@ -195,7 +195,7 @@ pub(crate) enum Exit {
     Stay,
     /// Leave the reviewer; the pane it runs in is someone else's.
     Quit,
-    /// `A`: leave, and take the Herdr pane with it.
+    /// `A`, `Q` and `q` on the last document: leave, and take the Herdr pane with it.
     QuitAndClosePane,
 }
 

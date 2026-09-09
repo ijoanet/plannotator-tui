@@ -322,7 +322,7 @@ pub(crate) fn run_ui(build: impl FnOnce(usize) -> Result<App>) -> Result<()> {
     let _ = execute!(stdout(), DisableBracketedPaste);
     let _ = execute!(stdout(), DisableMouseCapture);
     ratatui::restore();
-    // `A` asked for the pane to go with the app. This happens after the terminal is restored,
+    // The app asked for the pane to go with it. This happens after the terminal is restored,
     // because closing the pane destroys the PTY underneath it and `restore` would then be
     // writing to a terminal that no longer exists.
     if matches!(result, Ok(true)) {

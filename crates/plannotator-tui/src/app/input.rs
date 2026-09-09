@@ -83,7 +83,8 @@ impl App {
     }
 
     /// The keymap overlay is a reader, not a mode with actions: any of `?`, Esc or `q` leaves it,
-    /// and `q` closes the list rather than the app so it cannot be a surprising way to quit.
+    /// and `q` closes the list rather than the open tab, so reading the keys cannot cost a
+    /// document.
     fn help_key(&mut self, key: KeyEvent) {
         if matches!(key.code, KeyCode::Char('?' | 'q') | KeyCode::Esc) {
             self.mode = Mode::Browse;
