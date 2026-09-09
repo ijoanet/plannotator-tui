@@ -25,7 +25,7 @@ use crate::layout::DocLayout;
 use crate::render::RenderSettings;
 
 const USAGE: &str = "usage:
-  plannotator-tui <file.md | folder>
+  plannotator-tui <file.md | file.md file2.md … | folder>
   plannotator-tui --export <file.md>
   plannotator-tui --bench <file.md>
   plannotator-tui --blocks <file.md>
@@ -100,7 +100,7 @@ pub(crate) fn run(args: &[String]) -> Result<()> {
         Some("--export") => {
             let target = path(1)?;
             let app = open_app(&target, 100, false)?;
-            print!("{}", if target.is_dir() { app.folder_feedback()? } else { app.feedback() });
+            print!("{}", if target.is_dir() { app.set_feedback()? } else { app.feedback() });
             Ok(())
         }
         Some("--blocks") => {

@@ -8,6 +8,7 @@ mod cli;
 mod config;
 mod delivery;
 mod doc;
+mod docs;
 mod export;
 mod herdr;
 mod last;
@@ -17,7 +18,6 @@ mod srcmap;
 mod store;
 mod table;
 mod theme;
-mod tree;
 mod workspace_paths;
 mod wrap;
 

@@ -1,4 +1,4 @@
-//! Drawing: header, optional tree, gutter + document, annotation rail, footer, and the
+//! Drawing: the tab row, header, gutter + document, annotation rail, footer, and the
 //! floating toolbar and compose box. Pure over `App` except for recording geometry for
 //! hit-testing.
 
@@ -11,15 +11,13 @@ use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
 use super::{App, Focus, GUTTER, Geometry, Mode, TOOLBAR, glyph, label};
+use crate::docs::{DocSet, marker_width};
 use crate::wrap::wrap_line;
 
 const RAIL_WIDTH: u16 = 36;
 const RAIL_MIN_WIDTH: u16 = 28;
 /// Below this the rail is dropped and annotations are only marked in the gutter.
 const RAIL_MIN_TOTAL_WIDTH: u16 = 80;
-const TREE_WIDTH: u16 = 28;
-/// Below this the tree is hidden unless toggled on; Tab still reaches it.
-pub(super) const TREE_MIN_TOTAL_WIDTH: u16 = 120;
 const COMPOSE_WIDTH: u16 = 48;
 
 /// Painting precedence when annotations overlap a cell.
@@ -34,36 +32,34 @@ fn priority(kind: Kind) -> u8 {
 impl App {
     pub(crate) fn draw(&mut self, frame: &mut Frame) {
         let area = frame.area();
-        let [header, body, footer] =
-            Layout::vertical([Constraint::Length(1), Constraint::Min(1), Constraint::Length(1)]).areas(area);
+        // The tab row sits above the header, where nvim puts its tabline. One document needs no
+        // tabs, so a single presented file costs no chrome.
+        let tabs_height = u16::from(self.docs.as_ref().is_some_and(|set| set.len() > 1));
+        let [tabs, header, body, footer] = Layout::vertical([
+            Constraint::Length(tabs_height),
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
+        .areas(area);
 
-        let show_tree = self.tree_shown(area.width) || (self.tree.is_some() && self.focus == Focus::Tree);
-        let tree_width = if show_tree { TREE_WIDTH } else { 0 };
         // The rail only holds bubbles for annotations that exist. Reserving it while there are
         // none costs about a third of the width and shows nothing - which is most of the time a
         // document is being read rather than marked up. The toolbar and the compose box float
         // over the document, so they do not need this space either. Adding the first annotation
         // reflows the document once, which is also how the rail announces itself.
-        let rail_wanted =
-            self.open.store.has_placed() && area.width.saturating_sub(tree_width) >= RAIL_MIN_TOTAL_WIDTH;
+        let rail_wanted = self.open.store.has_placed() && area.width >= RAIL_MIN_TOTAL_WIDTH;
         let rail_width =
             if rail_wanted { (area.width * 3 / 10).clamp(RAIL_MIN_WIDTH, RAIL_WIDTH) } else { 0 };
-        let [tree, gutter, doc, _gap, rail] = Layout::horizontal([
-            Constraint::Length(tree_width),
+        let [gutter, doc, _gap, rail] = Layout::horizontal([
             Constraint::Length(GUTTER),
             Constraint::Min(20),
             Constraint::Length(u16::from(rail_width > 0)),
             Constraint::Length(rail_width),
         ])
         .areas(body);
-        self.geometry = Geometry {
-            tree,
-            doc,
-            toolbar: None,
-            bubbles: Vec::new(),
-            send_button: None,
-            pick_rows: Vec::new(),
-        };
+        self.geometry =
+            Geometry { doc, toolbar: None, bubbles: Vec::new(), send_button: None, pick_rows: Vec::new() };
 
         if self.open.layout.width != usize::from(doc.width) {
             self.open.layout.reflow(usize::from(doc.width));
@@ -71,12 +67,10 @@ impl App {
             self.scroll_by(0);
         }
 
-        self.draw_header(frame, header);
-        if show_tree {
-            // A resize may have changed the tree's height; keep the window in range.
-            self.tree_scroll_by(0);
-            self.draw_tree(frame, tree);
+        if tabs_height > 0 {
+            self.draw_tabs(frame, tabs);
         }
+        self.draw_header(frame, header);
         self.draw_document(frame, gutter, doc);
         if rail_width > 0 {
             self.draw_rail(frame, rail);
@@ -91,54 +85,46 @@ impl App {
         }
     }
 
-    fn draw_tree(&self, frame: &mut Frame, area: Rect) {
+    /// The tab row: one tab per presented document, the open one highlighted, each with its
+    /// annotation count. Tabs that do not fit become a count at the edge they went past.
+    fn draw_tabs(&self, frame: &mut Frame, area: Rect) {
         let theme = self.render.theme;
-        let Some(tree) = &self.tree else { return };
-        let focused = self.focus == Focus::Tree;
-        let border = if focused { Style::new().fg(theme.accent) } else { Style::new().fg(theme.muted) };
-        let block = Block::default().borders(Borders::RIGHT).border_style(border);
-        let inner = block.inner(area);
-        frame.render_widget(block, area);
-        let open_path = match &self.open.source.provenance {
-            plannotator_tui_schema::Provenance::File { path } => Some(path.as_path()),
-            _ => None,
-        };
-        let lines: Vec<Line<'static>> = tree
-            .rows
-            .iter()
-            .enumerate()
-            .skip(self.tree_scroll)
-            .take(usize::from(inner.height))
-            .map(|(i, row)| {
-                let indent = "  ".repeat(row.depth);
-                let name = if row.is_dir {
-                    let arrow = if row.expanded { "\u{25be}" } else { "\u{25b8}" };
-                    format!("{indent}{arrow} {}/", row.name)
-                } else {
-                    format!("{indent}{}", row.name)
-                };
-                let mut style = if row.is_dir { Style::new().dim() } else { Style::new() };
-                if open_path == Some(row.path.as_path()) {
-                    style = style.bold().fg(theme.accent);
-                }
-                let row_bg = (focused && i == self.tree_cursor).then_some(theme.block_bg);
-                if let Some(bg) = row_bg {
-                    style = style.bg(bg);
-                }
-                // Name on the left, annotation count right-aligned; nothing shown at zero.
-                let count = if row.annotations > 0 { row.annotations.to_string() } else { String::new() };
-                let width = usize::from(inner.width);
-                let name: String = name.chars().take(width.saturating_sub(count.len() + 2)).collect();
-                let pad = width.saturating_sub(1 + name.chars().count() + count.len());
-                let with_bg = |s: Style| row_bg.map_or(s, |bg| s.bg(bg));
-                Line::from(vec![
-                    Span::styled(format!(" {name}"), style),
-                    Span::styled(" ".repeat(pad), with_bg(Style::new())),
-                    Span::styled(count, with_bg(Style::new().fg(theme.comment))),
-                ])
-            })
-            .collect();
-        frame.render_widget(Paragraph::new(lines), inner);
+        let Some(set) = &self.docs else { return };
+        let width = usize::from(area.width);
+        let row = set.tab_row(width);
+        let mut spans: Vec<Span<'static>> = Vec::new();
+        if row.hidden_before > 0 {
+            spans.push(Span::styled(format!("\u{2039}{} ", row.hidden_before), Style::new().fg(theme.muted)));
+        }
+        // What the markers leave for labels; the open tab is truncated rather than dropped.
+        let budget = width
+            .saturating_sub(marker_width(row.hidden_before))
+            .saturating_sub(marker_width(row.hidden_after));
+        let mut used = 0usize;
+        for index in row.visible.clone() {
+            let Some(doc) = set.docs().get(index) else { continue };
+            if index != row.visible.start {
+                spans.push(Span::styled("\u{2502}", Style::new().fg(theme.border)));
+                used += 1;
+            }
+            let label = DocSet::label(doc);
+            let room = budget.saturating_sub(used);
+            let label = if label.width() > room { truncate(&label, room) } else { label };
+            used += label.width();
+            let style = if index == set.current() {
+                Style::new().fg(theme.accent).add_modifier(Modifier::BOLD)
+            } else {
+                Style::new().fg(theme.muted)
+            };
+            spans.push(Span::styled(label, style));
+        }
+        if row.hidden_after > 0 {
+            let pad = width.saturating_sub(used).saturating_sub(marker_width(row.hidden_before));
+            let pad = pad.saturating_sub(marker_width(row.hidden_after));
+            spans.push(Span::raw(" ".repeat(pad)));
+            spans.push(Span::styled(format!(" {}\u{203a}", row.hidden_after), Style::new().fg(theme.muted)));
+        }
+        frame.render_widget(Paragraph::new(Line::from(spans)), area);
     }
 
     fn draw_document(&self, frame: &mut Frame, gutter: Rect, doc: Rect) {
@@ -397,8 +383,7 @@ impl App {
         }
         let help = match self.focus {
             _ if self.pending.is_some() => "a looks good · c comment · d delete · esc clear ",
-            Focus::Tree => "j/k · enter open · E send · t hide · q quit ",
-            Focus::Rail => "j/k · e edit · x remove · tab · q quit ",
+            Focus::Rail => "j/k · e edit · x remove · esc · q quit ",
             Focus::Document => "drag or v select · c comment · E send · tab · q quit ",
         };
         let [left_area, right_area] =
@@ -415,4 +400,23 @@ impl App {
 fn short_id(id: &str) -> String {
     let tail: Vec<char> = id.chars().rev().take(5).collect();
     tail.into_iter().rev().collect()
+}
+
+/// Cut a tab label to `room` display columns, marking that it was cut.
+fn truncate(label: &str, room: usize) -> String {
+    if room == 0 {
+        return String::new();
+    }
+    let mut out = String::new();
+    let mut used = 0usize;
+    for ch in label.chars() {
+        let next = used + ch.to_string().width();
+        if next > room.saturating_sub(1) {
+            break;
+        }
+        out.push(ch);
+        used = next;
+    }
+    out.push('\u{2026}');
+    out
 }

@@ -19,9 +19,9 @@ pub(super) enum SendState {
 }
 
 impl App {
-    /// Send feedback: every annotated file's in folder mode, else the open file's.
+    /// Send feedback: every annotated document's in a set, else the open one's.
     pub(super) fn send_feedback(&mut self) -> Result<()> {
-        let text = if self.tree.is_some() { self.folder_feedback()? } else { self.feedback() };
+        let text = if self.docs.is_some() { self.set_feedback()? } else { self.feedback() };
         let count = self.send_count();
         let target = self.delivery.describe();
         match self.delivery.deliver(&text) {
@@ -70,10 +70,10 @@ impl App {
         if !archive::enabled(|key| std::env::var(key).ok(), &self.data_dir) {
             return false;
         }
-        let (surface, target, annotations) = if let Some(tree) = &self.tree {
-            // A folder session submits one body of feedback for the whole session;
-            // the per-document records are not part of it (contract semantics).
-            ("annotate-folder", Target::file(tree.root()), Vec::new())
+        let (surface, target, annotations) = if let Some(set) = &self.docs {
+            // A set submits one body of feedback for the whole session; the per-document records
+            // are not part of it (contract semantics).
+            ("annotate-folder", Target::file(set.root()), Vec::new())
         } else {
             let annotations = Self::annotation_records(&self.open.store);
             match &self.open.source.provenance {
@@ -105,8 +105,8 @@ impl App {
         .is_some()
     }
 
-    /// Clear what the send just covered: the open file's annotations, and in folder mode every
-    /// other annotated file's too, mirroring `record_delivery`.
+    /// Clear what the send just covered: the open document's annotations, and in a set every
+    /// other annotated document's too, mirroring `record_delivery`.
     ///
     /// A review that has been handed over and archived has done its job; leaving it behind made
     /// every later send repeat it, so an agent received items it had already acted on.
@@ -115,7 +115,7 @@ impl App {
             return Ok(0);
         }
         let mut cleared = 0usize;
-        if self.tree.is_none() {
+        if self.docs.is_none() {
             cleared += self.open.store.remove_placed()?;
         } else {
             let width = self.open.layout.width;
@@ -131,10 +131,7 @@ impl App {
         }
         self.rail_cursor = 0;
         self.clear_selection();
-        if let Some(mut tree) = self.tree.take() {
-            self.refresh_counts(&mut tree);
-            self.tree = Some(tree);
-        }
+        self.sync_doc_counts();
         Ok(cleared)
     }
 
@@ -162,10 +159,10 @@ impl App {
             .collect()
     }
 
-    /// Annotations the next send covers: the whole folder's, or the open file's.
+    /// Annotations the next send covers: the whole set's, or the open document's.
     pub(super) fn send_count(&self) -> usize {
-        match &self.tree {
-            Some(tree) => tree.rows.iter().filter(|r| !r.is_dir).map(|r| r.annotations).sum(),
+        match &self.docs {
+            Some(set) => set.total_annotations(),
             None => self.open.store.placed().len(),
         }
     }
@@ -202,10 +199,10 @@ impl App {
         }
     }
 
-    /// Recompute the send state from the record (on load and file switch).
+    /// Recompute the send state from the record (on load and document switch).
     pub(super) fn derive_send_state(&mut self) {
-        let delivered = match &self.tree {
-            Some(_) => self.folder_all_delivered().unwrap_or(false),
+        let delivered = match &self.docs {
+            Some(_) => self.set_all_delivered().unwrap_or(false),
             None => self.open.store.all_delivered(),
         };
         self.send_state = if delivered { SendState::Sent } else { SendState::Ready };

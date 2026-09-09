@@ -40,18 +40,14 @@ impl App {
                 self.request_quit();
                 return Ok(());
             }
-            (KeyCode::Tab, _) => {
-                self.cycle_focus();
+            // Tab walks the documents presented together. There is nothing else to walk: the
+            // rail is reached with `n`, and the tree it used to cycle through is gone.
+            (KeyCode::Tab, _) => return self.cycle_document(),
+            (KeyCode::Char('n'), _) => {
+                self.toggle_rail_focus();
                 return Ok(());
             }
-            // Shift-Tab walks the documents themselves, where Tab walks the panes of one
-            // document. With several presented together that is the movement wanted most.
-            (KeyCode::BackTab, _) => return self.cycle_document(),
             (KeyCode::Char('E'), _) => return self.send_feedback(),
-            (KeyCode::Char('t'), _) => {
-                self.toggle_tree(self.geometry.doc.width + self.geometry.tree.width + GUTTER);
-                return Ok(());
-            }
             (KeyCode::Char('r'), _) => return self.reload(),
             (KeyCode::Char('p'), _) => {
                 self.reopen_picker();
@@ -60,7 +56,6 @@ impl App {
             _ => {}
         }
         match self.focus {
-            Focus::Tree => self.tree_key(key),
             Focus::Document => self.document_key(key),
             Focus::Rail => self.rail_key(key),
         }
@@ -85,30 +80,13 @@ impl App {
         Ok(())
     }
 
-    fn cycle_focus(&mut self) {
-        let has_tree = self.tree.is_some();
-        let has_rail = !self.open.store.placed().is_empty();
+    /// `n` moves between the document and its notes, which is all `Tab` had left to cycle.
+    fn toggle_rail_focus(&mut self) {
+        let has_rail = self.open.store.has_placed();
         self.focus = match self.focus {
             Focus::Document if has_rail => Focus::Rail,
-            Focus::Document | Focus::Rail if has_tree => Focus::Tree,
-            Focus::Tree | Focus::Document | Focus::Rail => Focus::Document,
+            Focus::Document | Focus::Rail => Focus::Document,
         };
-    }
-
-    fn tree_key(&mut self, key: KeyEvent) -> Result<()> {
-        let len = self.tree_len();
-        match key.code {
-            KeyCode::Char('j') | KeyCode::Down => {
-                self.tree_cursor = (self.tree_cursor + 1).min(len.saturating_sub(1));
-            }
-            KeyCode::Char('k') | KeyCode::Up => self.tree_cursor = self.tree_cursor.saturating_sub(1),
-            KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => self.open_tree_selection()?,
-            KeyCode::Esc => self.focus = Focus::Document,
-            _ => {}
-        }
-        // The tree's height is the last frame's; the first frame has not drawn yet, but its cursor is row 0.
-        self.keep_tree_cursor_visible(usize::from(self.geometry.tree.height));
-        Ok(())
     }
 
     fn rail_key(&mut self, key: KeyEvent) -> Result<()> {
@@ -181,7 +159,7 @@ impl App {
                 let removed = self.open.store.remove_in_block(&self.open.doc, self.selected)?;
                 if removed > 0 {
                     self.mark_unsent();
-                    self.sync_tree_counts();
+                    self.sync_doc_counts();
                 }
                 self.status = Some(format!("removed {removed} annotation(s) on block"));
             }
@@ -295,8 +273,6 @@ impl App {
 
     fn mouse(&mut self, mouse: MouseEvent) -> Result<()> {
         match mouse.kind {
-            MouseEventKind::ScrollDown if self.in_tree(mouse.column, mouse.row) => self.tree_scroll_by(3),
-            MouseEventKind::ScrollUp if self.in_tree(mouse.column, mouse.row) => self.tree_scroll_by(-3),
             MouseEventKind::ScrollDown => self.scroll_by(3),
             MouseEventKind::ScrollUp => self.scroll_by(-3),
             MouseEventKind::Down(MouseButton::Left) => {
@@ -305,11 +281,6 @@ impl App {
                 }
                 if let Some(kind) = self.toolbar_hit(mouse.column, mouse.row) {
                     return self.act(kind);
-                }
-                if let Some(index) = self.tree_hit(mouse.row, mouse.column) {
-                    self.tree_cursor = index;
-                    self.focus = Focus::Tree;
-                    return self.open_tree_selection();
                 }
                 if let Some(index) = self.bubble_hit(mouse.column, mouse.row) {
                     self.rail_cursor = index;
@@ -380,19 +351,6 @@ impl App {
             return None;
         }
         spans.iter().zip(TOOLBAR.iter()).find(|(span, _)| span.contains(&column)).map(|(_, item)| item.3)
-    }
-
-    /// Whether the screen cell is inside the drawn tree pane.
-    fn in_tree(&self, column: u16, row: u16) -> bool {
-        let tree = self.geometry.tree;
-        tree.width > 0 && column >= tree.x && column < tree.right() && row >= tree.y && row < tree.bottom()
-    }
-
-    /// The tree row under the screen cell, accounting for the tree's scroll offset.
-    fn tree_hit(&self, row: u16, column: u16) -> Option<usize> {
-        self.in_tree(column, row)
-            .then(|| self.tree_scroll + usize::from(row - self.geometry.tree.y))
-            .filter(|&i| i < self.tree_len())
     }
 
     fn bubble_hit(&self, column: u16, row: u16) -> Option<usize> {

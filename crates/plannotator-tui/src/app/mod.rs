@@ -23,11 +23,11 @@ use ratatui::layout::Rect;
 
 use crate::delivery::Delivery;
 use crate::doc::Document;
+use crate::docs::DocSet;
 use crate::export;
 use crate::layout::DocLayout;
 use crate::render::RenderSettings;
 use crate::store::{Location, Store};
-use crate::tree::Tree;
 use crate::workspace_paths;
 use selection::Selection;
 use send::SendState;
@@ -58,7 +58,6 @@ enum Mode {
 /// Which pane keyboard input goes to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Focus {
-    Tree,
     Document,
     Rail,
 }
@@ -66,7 +65,6 @@ enum Focus {
 /// Screen geometry captured during the last draw, for hit-testing input.
 #[derive(Debug, Default, Clone)]
 struct Geometry {
-    tree: Rect,
     doc: Rect,
     /// Toolbar rect and the column span of each item, in screen coordinates.
     toolbar: Option<(Rect, [Range<u16>; 3])>,
@@ -86,7 +84,7 @@ struct Pending {
     at: (usize, usize),
 }
 
-/// Everything about the open document; swapped wholesale when the tree switches files.
+/// Everything about the open document; swapped wholesale when the tab row switches files.
 #[derive(Debug)]
 struct Open {
     source: DocumentSource,
@@ -128,13 +126,9 @@ pub(crate) struct App {
     /// Where annotations are stored and how this folder is named there.
     data_dir: PathBuf,
     project: String,
-    /// Present in folder mode.
-    tree: Option<Tree>,
-    tree_cursor: usize,
-    /// First tree row drawn; follows `tree_cursor` so the selected row stays visible.
-    tree_scroll: usize,
-    /// `t` toggles; `None` means "automatic by width".
-    tree_visible: Option<bool>,
+    /// The documents presented together, when more than one file is in play. `None` for a
+    /// document opened on its own, or one that never came from a file (stdin, a reply).
+    docs: Option<DocSet>,
     delivery: Box<dyn Delivery>,
     send_state: SendState,
     focus: Focus,
@@ -208,10 +202,7 @@ impl App {
             render,
             data_dir,
             project,
-            tree: None,
-            tree_cursor: 0,
-            tree_scroll: 0,
-            tree_visible: None,
+            docs: None,
             delivery,
             send_state,
             focus: Focus::Document,
@@ -243,45 +234,25 @@ impl App {
         })
     }
 
-    /// Folder mode: a lazy tree on the left, the shallowest Markdown file open. A folder
-    /// with none near the top opens on a placeholder so the tree is still browsable.
+    /// Folder mode: every Markdown file beneath `root`, presented as one set.
+    ///
+    /// There is no tree to browse, so a folder with no Markdown is an error naming the folder
+    /// rather than a placeholder document telling you to pick from a pane that no longer exists.
     pub(crate) fn open_folder(
         root: &Path,
         width: usize,
         delivery: Box<dyn Delivery>,
         render: RenderSettings,
     ) -> Result<Self> {
-        let mut tree = Tree::scan(root)?;
-        let first = crate::tree::first_file_shallow(root, 2_000);
-        let source = match &first {
-            Some(path) => read_file(path)?,
-            None => DocumentSource::new(
-                format!(
-                    "# {}\n\nNo Markdown file found near the top of this folder.\n\nPick one from the tree on the left: `Tab` focuses it, `Enter` opens a file or expands a folder.\n",
-                    root.display()
-                ),
-                root.display().to_string(),
-                true,
-                Provenance::Stdin,
-            ),
-        };
-        let mut app = Self::open(source, width, delivery, render)?;
-        // The project is the folder's, not the first file's parent's.
-        app.project = workspace_paths::project_name(root);
-        if let Some(path) = &first {
-            app.open = Open::new(read_file(path)?, width, &app.data_dir, &app.project, &app.render)?;
-        }
-        app.derive_send_state();
-        app.refresh_counts(&mut tree);
-        app.tree_cursor = first.as_deref().and_then(|p| tree.position(p)).unwrap_or(0);
-        app.tree = Some(tree);
-        Ok(app)
+        let set = DocSet::of_folder(root)?;
+        let files: Vec<PathBuf> = set.docs().iter().map(|d| d.path.clone()).collect();
+        Self::open_files(&files, root, width, delivery, render)
     }
 
-    /// Documents presented together: a flat tree of exactly these files, the first one open.
+    /// Documents presented together, the first one open and the rest a `TAB` away.
     ///
-    /// `root` is their common directory and names the project, exactly as folder mode does, so
-    /// annotations are keyed the same way whether a file is reached from here or from a folder.
+    /// `root` is their common directory and names the project, so annotations are keyed the same
+    /// way whether a file is reached from a set or opened on its own.
     pub(crate) fn open_files(
         files: &[PathBuf],
         root: &Path,
@@ -289,106 +260,56 @@ impl App {
         delivery: Box<dyn Delivery>,
         render: RenderSettings,
     ) -> Result<Self> {
-        let first = files.first().context("no document to open")?;
-        let mut app = Self::open(read_file(first)?, width, delivery, render)?;
+        let mut set = DocSet::of_files(root, files);
+        let first = set.current_path().context("no document to open")?.to_path_buf();
+        let mut app = Self::open(read_file(&first)?, width, delivery, render)?;
         app.project = workspace_paths::project_name(root);
-        app.open = Open::new(read_file(first)?, width, &app.data_dir, &app.project, &app.render)?;
-        let mut tree = Tree::of_files(root, files);
+        app.open = Open::new(read_file(&first)?, width, &app.data_dir, &app.project, &app.render)?;
+        set.focus(&first);
+        app.docs = Some(set);
+        app.sync_doc_counts();
         app.derive_send_state();
-        app.refresh_counts(&mut tree);
-        app.tree_cursor = tree.position(first).unwrap_or(0);
-        app.tree = Some(tree);
         Ok(app)
     }
 
-    /// Open the next document in the tree after the one on screen, wrapping. Directory rows are
-    /// skipped: this walks documents, not the tree's shape.
+    /// Open the next document in the set, wrapping. `TAB` walks documents; there is nothing else
+    /// to walk now that the tree is gone.
     pub(crate) fn cycle_document(&mut self) -> Result<()> {
-        let files: Vec<PathBuf> = match &self.tree {
-            Some(tree) => tree.rows.iter().filter(|r| !r.is_dir).map(|r| r.path.clone()).collect(),
-            None => return Ok(()),
-        };
-        if files.len() < 2 {
-            return Ok(());
-        }
-        let current = match &self.open.source.provenance {
-            Provenance::File { path } => files.iter().position(|p| p == path),
-            _ => None,
-        };
-        let next = current.map_or(0, |i| (i + 1) % files.len());
-        let Some(path) = files.get(next).cloned() else { return Ok(()) };
-        let width = self.open.layout.width;
-        self.open = Open::new(read_file(&path)?, width, &self.data_dir, &self.project, &self.render)?;
-        self.derive_send_state();
-        if let Some(tree) = &self.tree
-            && let Some(row) = tree.position(&path)
-        {
-            self.tree_cursor = row;
-        }
-        self.focus = Focus::Document;
-        self.scroll = 0;
-        self.selected = 0;
-        self.clear_selection();
+        let Some((index, path)) = self.docs.as_ref().and_then(DocSet::next) else { return Ok(()) };
+        let total = self.docs.as_ref().map_or(0, DocSet::len);
+        self.open_doc(&path)?;
         let name =
             path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
-        self.status = Some(format!("{name} ({}/{})", next + 1, files.len()));
+        self.status = Some(format!("{name} ({}/{total})", index + 1));
         Ok(())
     }
 
-    /// Recompute the tree's annotation counts from the records on disk.
-    fn refresh_counts(&self, tree: &mut Tree) {
-        let (data_dir, project) = (self.data_dir.clone(), self.project.clone());
-        tree.set_counts(|path| Store::count_at(&Location::for_file(&data_dir, &project, path)));
-    }
-
-    /// Keep the tree's counts current after any annotation change.
-    fn sync_tree_counts(&mut self) {
-        if let Some(mut tree) = self.tree.take() {
-            self.refresh_counts(&mut tree);
-            self.tree = Some(tree);
-        }
-    }
-
-    /// Whether the tree is drawn at `width` columns: explicit toggle wins, else by width.
-    pub(super) fn tree_shown(&self, width: u16) -> bool {
-        self.tree.is_some() && self.tree_visible.unwrap_or(width >= draw::TREE_MIN_TOTAL_WIDTH)
-    }
-
-    fn toggle_tree(&mut self, width: u16) {
-        let shown = self.tree_shown(width);
-        self.tree_visible = Some(!shown);
-        if shown && self.focus == Focus::Tree {
-            self.focus = Focus::Document;
-        }
-    }
-
-    /// Open the file under the tree cursor, or expand/collapse a directory.
-    fn open_tree_selection(&mut self) -> Result<()> {
-        let Some(row) = self.tree.as_ref().and_then(|t| t.rows.get(self.tree_cursor)) else { return Ok(()) };
-        if row.is_dir {
-            if let Some(mut tree) = self.tree.take() {
-                let result = tree.toggle(self.tree_cursor);
-                self.refresh_counts(&mut tree);
-                self.tree = Some(tree);
-                result?;
-            }
-            return Ok(());
-        }
-        let path = row.path.clone();
-        if matches!(&self.open.source.provenance, Provenance::File { path: p } if *p == path) {
-            self.focus = Focus::Document;
-            return Ok(());
-        }
+    /// Swap the open document for `path`, keeping the set pointed at it.
+    fn open_doc(&mut self, path: &Path) -> Result<()> {
         let width = self.open.layout.width;
-        self.open = Open::new(read_file(&path)?, width, &self.data_dir, &self.project, &self.render)?;
+        self.open = Open::new(read_file(path)?, width, &self.data_dir, &self.project, &self.render)?;
+        if let Some(set) = self.docs.as_mut() {
+            set.focus(path);
+        }
         self.derive_send_state();
+        self.focus = Focus::Document;
         self.scroll = 0;
         self.selected = 0;
         self.cursor = (0, 0);
         self.rail_cursor = 0;
         self.clear_selection();
-        self.focus = Focus::Document;
         Ok(())
+    }
+
+    /// Recount every document in the set from the records on disk.
+    ///
+    /// The counts are what the tab row shows and what `annotated_files` walks, so a send stops
+    /// covering a file the moment they go stale.
+    fn sync_doc_counts(&mut self) {
+        let (data_dir, project) = (self.data_dir.clone(), self.project.clone());
+        if let Some(set) = self.docs.as_mut() {
+            set.set_counts(|path| Store::count_at(&Location::for_file(&data_dir, &project, path)));
+        }
     }
 
     pub(crate) fn set_status(&mut self, status: String) {
@@ -406,7 +327,7 @@ impl App {
         let rendered = self.open.layout.rendered_in_range(&self.open.doc.source, &range);
         self.open.store.add(&self.open.doc, range, rendered, kind, body)?;
         self.mark_unsent();
-        self.sync_tree_counts();
+        self.sync_doc_counts();
         Ok(())
     }
 
@@ -442,7 +363,7 @@ impl App {
             self.mark_unsent();
             self.status = Some("annotation removed".into());
             self.rail_cursor = self.rail_cursor.min(self.open.store.placed().len().saturating_sub(1));
-            self.sync_tree_counts();
+            self.sync_doc_counts();
         }
         Ok(())
     }
@@ -467,27 +388,30 @@ impl App {
         export::feedback(source, name, &entries)
     }
 
-    /// Feedback for every annotated file in the folder, one `# Annotations on <path>` block each.
-    pub(crate) fn folder_feedback(&self) -> Result<String> {
-        let Some(tree) = &self.tree else { return Ok(self.feedback()) };
+    /// Feedback for every annotated document in the set, one `# Annotations on <path>` block each.
+    pub(crate) fn set_feedback(&self) -> Result<String> {
+        let Some(set) = &self.docs else { return Ok(self.feedback()) };
         let width = self.open.layout.width;
         let mut out = String::new();
         for path in self.annotated_files() {
             let open = Open::new(read_file(&path)?, width, &self.data_dir, &self.project, &self.render)?;
-            let relative = path.strip_prefix(tree.root()).unwrap_or(&path);
+            let relative = path.strip_prefix(set.root()).unwrap_or(&path);
             let _ = writeln!(out, "{}", Self::feedback_for(&open, &relative.display().to_string()));
         }
         Ok(if out.is_empty() { "No annotations.".to_owned() } else { out })
     }
 
-    /// Paths of every annotated file in the folder: the project's records (which carry their
-    /// document path since 0.5.0) plus any listed tree row with a count, so nothing depends
-    /// on which directories happen to be expanded.
+    /// Paths of every annotated file a send covers: the project's records (which carry their
+    /// document path since 0.5.0) plus any document in the set with a count, so a record written
+    /// by an older build is still found.
+    ///
+    /// This is what `E`, `record_delivery` and `clear_sent` all walk. It used to come from the
+    /// tree's rows; it now comes from the set's counts, which `sync_doc_counts` keeps current.
     fn annotated_files(&self) -> Vec<PathBuf> {
-        let Some(tree) = &self.tree else { return Vec::new() };
+        let Some(set) = &self.docs else { return Vec::new() };
         let mut found = Store::annotated_documents(&self.data_dir, &self.project);
-        for row in tree.rows.iter().filter(|r| !r.is_dir && r.annotations > 0) {
-            found.push(row.path.clone());
+        for doc in set.docs().iter().filter(|d| d.annotations > 0) {
+            found.push(doc.path.clone());
         }
         found.sort();
         found.dedup();
@@ -501,7 +425,7 @@ impl App {
 
     /// Remember the send on every file it covered: the open one in memory, the rest on disk.
     fn record_delivery(&mut self, target: &str) -> Result<()> {
-        if self.tree.is_none() {
+        if self.docs.is_none() {
             return self.open.store.record_delivery(target);
         }
         let width = self.open.layout.width;
@@ -517,8 +441,8 @@ impl App {
         Ok(())
     }
 
-    /// True when every annotated file in the folder has been sent since it last changed.
-    fn folder_all_delivered(&self) -> Result<bool> {
+    /// True when every annotated document in the set has been sent since it last changed.
+    fn set_all_delivered(&self) -> Result<bool> {
         let files = self.annotated_files();
         if files.is_empty() {
             return Ok(false);
@@ -581,30 +505,6 @@ impl App {
         let height = usize::from(self.geometry.doc.height.max(1));
         let max = self.open.layout.total_rows.saturating_sub(height);
         self.scroll = (self.scroll as i64 + delta).clamp(0, max as i64) as usize;
-    }
-
-    fn tree_len(&self) -> usize {
-        self.tree.as_ref().map_or(0, |t| t.rows.len())
-    }
-
-    /// Scroll the tree by `delta` rows without moving its cursor (mouse wheel over the tree).
-    fn tree_scroll_by(&mut self, delta: i64) {
-        let height = usize::from(self.geometry.tree.height.max(1));
-        let max = self.tree_len().saturating_sub(height);
-        self.tree_scroll = (self.tree_scroll as i64 + delta).clamp(0, max as i64) as usize;
-    }
-
-    /// Move the tree's window so `tree_cursor` is inside its `height` visible rows.
-    fn keep_tree_cursor_visible(&mut self, height: usize) {
-        if height == 0 {
-            return;
-        }
-        if self.tree_cursor < self.tree_scroll {
-            self.tree_scroll = self.tree_cursor;
-        } else if self.tree_cursor >= self.tree_scroll + height {
-            self.tree_scroll = self.tree_cursor + 1 - height;
-        }
-        self.tree_scroll = self.tree_scroll.min(self.tree_len().saturating_sub(height));
     }
 
     /// Re-read the document from its provenance and re-resolve every annotation.

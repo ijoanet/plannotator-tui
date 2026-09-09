@@ -242,8 +242,11 @@ fn previewing_away_and_back_keeps_annotations() {
 }
 
 /// A folder of `count` Markdown files named `f00.md`, `f01.md`, … in a fresh temp dir.
-fn folder(count: usize) -> PathBuf {
-    let root = std::env::temp_dir().join(format!("plannotator-tui-folder-{}", std::process::id()));
+///
+/// `name` keeps callers apart: tests run in parallel, and a shared directory has them deleting
+/// each other's files.
+fn folder(name: &str, count: usize) -> PathBuf {
+    let root = std::env::temp_dir().join(format!("plannotator-tui-folder-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).expect("mkdir");
     for i in 0..count {
@@ -275,60 +278,28 @@ fn open_path(app: &App) -> String {
 }
 
 #[test]
-fn the_tree_scrolls_to_keep_the_cursor_visible_and_hit_tests_through_the_offset() {
-    let root = folder(30);
+fn a_folder_argument_becomes_a_set_of_its_markdown_files() {
+    let root = folder("as-set", 3);
     let mut app =
         App::open_folder(&root, 100, Box::new(Discard), RenderSettings::text_only()).expect("folder opens");
     app.data_dir = scratch_data_dir();
-    // 140 columns shows the tree; 20 rows leaves 18 for the body (header + footer).
-    draw_sized(&mut app, 140, 20);
-    app.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab))).expect("tab");
-    for _ in 0..25 {
-        app.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('j')))).expect("j");
-    }
-    assert_eq!(app.tree_cursor, 25);
-    let rows = draw_sized(&mut app, 140, 20);
-    assert_eq!(app.tree_scroll, 8, "the window slides so row 25 is the last visible row");
-    assert!(row(&rows, 1).contains("f08.md"), "first drawn tree row was {:?}", row(&rows, 1));
-    assert!(row(&rows, 18).contains("f25.md"), "last drawn tree row was {:?}", row(&rows, 18));
-    let tree_pane: Vec<String> = rows[1..=18].iter().map(|r| r.chars().take(28).collect()).collect();
-    assert!(!tree_pane.iter().any(|r| r.contains("f00.md")), "tree pane was {tree_pane:#?}");
+    let set = app.docs.as_ref().expect("a set");
+    let names: Vec<&str> = set.docs().iter().map(|d| d.name.as_str()).collect();
+    assert_eq!(names, ["f00.md", "f01.md", "f02.md"]);
+    assert_eq!(open_path(&app), "f00.md", "the first document opens");
+    std::fs::remove_dir_all(&root).expect("cleanup");
+}
 
-    // Clicking the third visible row opens the file at scroll + 2, not row 2.
-    let click = Event::Mouse(MouseEvent {
-        kind: MouseEventKind::Down(MouseButton::Left),
-        column: 2,
-        row: 3,
-        modifiers: KeyModifiers::NONE,
-    });
-    app.handle_event(&click).expect("click");
-    assert_eq!(app.tree_cursor, 10);
-    assert_eq!(open_path(&app), "f10.md");
-
-    // Moving back up pulls the window with the cursor.
-    app.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab))).expect("tab");
-    for _ in 0..5 {
-        app.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('k')))).expect("k");
-    }
-    draw_sized(&mut app, 140, 20);
-    assert_eq!((app.tree_cursor, app.tree_scroll), (5, 5));
-
-    // The wheel over the tree scrolls the tree, not the document, and leaves the cursor alone.
-    let wheel = Event::Mouse(MouseEvent {
-        kind: MouseEventKind::ScrollDown,
-        column: 2,
-        row: 5,
-        modifiers: KeyModifiers::NONE,
-    });
-    app.handle_event(&wheel).expect("wheel");
-    assert_eq!((app.tree_cursor, app.tree_scroll, app.scroll), (5, 8, 0));
-    // Wheel scrolling is clamped to the last full window of rows.
-    for _ in 0..20 {
-        app.handle_event(&wheel).expect("wheel");
-    }
-    assert_eq!(app.tree_scroll, 12, "30 rows in 18 lines: the window stops at 12");
-    let rows = draw_sized(&mut app, 140, 20);
-    assert!(row(&rows, 18).contains("f29.md"), "last tree row was {:?}", row(&rows, 18));
+#[test]
+fn a_folder_with_no_markdown_says_so_instead_of_opening_empty() {
+    let root = std::env::temp_dir().join(format!("plannotator-tui-nomd-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    std::fs::write(root.join("notes.txt"), "not markdown").expect("write");
+    // With no tree to browse, a placeholder document would tell you to use a pane that is gone.
+    let err = App::open_folder(&root, 100, Box::new(Discard), RenderSettings::text_only())
+        .expect_err("nothing to review");
+    assert!(err.to_string().contains(&root.display().to_string()), "{err}");
     std::fs::remove_dir_all(&root).expect("cleanup");
 }
 
@@ -424,6 +395,10 @@ fn the_rail_costs_no_width_until_an_annotation_exists() {
 
 /// Two documents in different directories, presented together. Each caller gets its own root:
 /// tests run in parallel, so a shared one has them deleting each other's fixtures.
+///
+/// The document is reopened after the scratch data directory is set, because `App::open_files`
+/// builds the first store against the real one; without that, this file's annotations would land
+/// in the developer's own Plannotator data and the set's counts would disagree with the records.
 fn set_app(name: &str) -> (PathBuf, App) {
     let root = std::env::temp_dir().join(format!("plannotator-tui-set-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
@@ -435,32 +410,81 @@ fn set_app(name: &str) -> (PathBuf, App) {
     let mut app = App::open_files(&files, &root, 80, Box::new(Discard), RenderSettings::text_only())
         .expect("opens the set");
     app.data_dir = scratch_data_dir();
+    app.open_doc(&root.join("one/doc.md")).expect("reopen under the scratch data dir");
+    app.sync_doc_counts();
     (root, app)
+}
+
+/// The open document's path, which distinguishes two files that share a basename.
+fn opened(app: &App) -> PathBuf {
+    match &app.open.source.provenance {
+        Provenance::File { path } => path.clone(),
+        _ => PathBuf::new(),
+    }
 }
 
 #[test]
 fn a_presented_set_lists_exactly_its_documents_by_relative_name() {
     let (_root, app) = set_app("lists");
-    let tree = app.tree.as_ref().expect("a tree");
-    let names: Vec<&str> = tree.rows.iter().map(|r| r.name.as_str()).collect();
+    let set = app.docs.as_ref().expect("a set");
+    let names: Vec<&str> = set.docs().iter().map(|d| d.name.as_str()).collect();
     // Same basename in both directories: the relative path keeps them apart.
     assert_eq!(names, ["one/doc.md", "two/doc.md"]);
-    assert!(tree.rows.iter().all(|r| !r.is_dir), "a set has no directories to expand");
 }
 
 #[test]
-fn shift_tab_walks_the_documents_and_wraps() {
+fn tab_walks_the_documents_and_wraps() {
     let (_root, mut app) = set_app("walks");
-    let opened = |app: &App| match &app.open.source.provenance {
-        Provenance::File { path } => path.clone(),
-        _ => PathBuf::new(),
-    };
     let first = opened(&app);
-    app.handle_event(&key(KeyCode::BackTab, KeyModifiers::SHIFT)).expect("cycles");
+    app.handle_event(&key(KeyCode::Tab, KeyModifiers::NONE)).expect("cycles");
     let second = opened(&app);
-    assert_ne!(first, second, "shift-tab opened the other document");
-    app.handle_event(&key(KeyCode::BackTab, KeyModifiers::SHIFT)).expect("cycles");
+    assert_ne!(first, second, "tab opened the other document");
+    assert_eq!(app.docs.as_ref().map(crate::docs::DocSet::current), Some(1), "the tab row followed");
+    app.handle_event(&key(KeyCode::Tab, KeyModifiers::NONE)).expect("cycles");
     assert_eq!(opened(&app), first, "cycling wraps back to the first");
+}
+
+#[test]
+fn one_document_shows_no_tab_row_and_a_set_shows_one() {
+    let mut single = app(Box::new(Discard));
+    let rows = draw_sized(&mut single, 80, 12);
+    assert!(!row(&rows, 0).contains("plan.md"), "a lone document spends no row on tabs: {:?}", row(&rows, 0));
+
+    let (_root, mut set) = set_app("tabrow");
+    let rows = draw_sized(&mut set, 80, 12);
+    let tabs = row(&rows, 0);
+    assert!(tabs.contains("one/doc.md"), "tab row was {tabs:?}");
+    assert!(tabs.contains("two/doc.md"), "tab row was {tabs:?}");
+}
+
+#[test]
+fn n_moves_focus_between_the_document_and_its_notes() {
+    let mut app = app(Box::new(Discard));
+    assert_eq!(app.focus, super::Focus::Document);
+    // Nothing to focus while there are no annotations.
+    app.handle_event(&key(KeyCode::Char('n'), KeyModifiers::NONE)).expect("n");
+    assert_eq!(app.focus, super::Focus::Document, "an empty rail is not worth focusing");
+
+    app.add_block_annotation(0, Kind::Comment, "note".to_owned()).expect("annotation");
+    app.handle_event(&key(KeyCode::Char('n'), KeyModifiers::NONE)).expect("n");
+    assert_eq!(app.focus, super::Focus::Rail);
+    app.handle_event(&key(KeyCode::Char('n'), KeyModifiers::NONE)).expect("n");
+    assert_eq!(app.focus, super::Focus::Document, "n comes back");
+}
+
+#[test]
+fn a_send_covers_every_document_in_the_set_not_just_the_open_one() {
+    let (_root, mut app) = set_app("coverage");
+    app.add_block_annotation(0, Kind::Comment, "about one".to_owned()).expect("annotate one");
+    app.handle_event(&key(KeyCode::Tab, KeyModifiers::NONE)).expect("tab");
+    app.add_block_annotation(0, Kind::Comment, "about two".to_owned()).expect("annotate two");
+
+    // The count is the set's, which is what the Send button promises and what a send must deliver.
+    assert_eq!(app.send_count(), 2, "both documents count towards the send");
+    let feedback = app.set_feedback().expect("feedback for the set");
+    assert!(feedback.contains("about one"), "the document not on screen is still sent: {feedback}");
+    assert!(feedback.contains("about two"), "{feedback}");
+    assert!(feedback.contains("one/doc.md") && feedback.contains("two/doc.md"), "{feedback}");
 }
 
 #[test]
@@ -508,4 +532,19 @@ fn clearing_on_send_can_be_turned_off() {
     app.add_block_annotation(0, Kind::Comment, "stay".to_owned()).expect("annotation");
     app.send_feedback().expect("sends");
     assert_eq!(app.send_count(), 1, "the annotation stays when the flag is off");
+}
+
+#[test]
+fn a_narrow_tab_row_keeps_the_open_document_and_counts_the_rest() {
+    let root = folder("narrow-tabs", 30);
+    let mut app =
+        App::open_folder(&root, 100, Box::new(Discard), RenderSettings::text_only()).expect("folder opens");
+    app.data_dir = scratch_data_dir();
+    let rows = draw_sized(&mut app, 80, 12);
+    let tabs = row(&rows, 0);
+    assert!(tabs.contains("f00.md"), "the open document is on the row: {tabs:?}");
+    // Thirty tabs cannot fit in eighty columns, so the remainder is a count at the edge.
+    assert!(tabs.contains('\u{203a}'), "hidden tabs are counted: {tabs:?}");
+    assert_eq!(tabs.chars().count(), 80, "the row is exactly the pane's width");
+    std::fs::remove_dir_all(&root).expect("cleanup");
 }
