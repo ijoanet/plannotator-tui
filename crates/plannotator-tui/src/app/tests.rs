@@ -863,6 +863,44 @@ fn app_on(path: &std::path::Path, git: crate::config::GitConfig) -> App {
     app
 }
 
+/// A change inside a reflowed paragraph must still bar its row.
+///
+/// Asserted on the drawn buffer, not on `ChangeBar`, because the defect was neither in the parser
+/// nor in the map: `draw.rs` asked about the row's FIRST mapped byte only, so a modified line was
+/// invisible whenever an unchanged one happened to start the row. In prose that is most of a
+/// paragraph. A test on the helper passes while the pane shows nothing.
+#[test]
+fn a_change_inside_a_wrapped_paragraph_still_bars_its_row() {
+    let theme = crate::theme::Theme::default();
+    let root = std::env::temp_dir().join(format!("plannotator-tui-reflow-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let doc = root.join("prose.md");
+    // One paragraph of four short source lines: at 80 columns they reflow into a single row.
+    std::fs::write(&doc, "# P\n\nalpha\nbeta\ngamma\ndelta\n").expect("write");
+    git_in(&root, &["init", "-q"]);
+    git_in(&root, &["add", "prose.md"]);
+    git_in(&root, &["commit", "-q", "-m", "first"]);
+    // Change only the THIRD line, so the row still starts on an unchanged one.
+    std::fs::write(&doc, "# P\n\nalpha\nbeta\ngamma changed\ndelta\n").expect("edit");
+
+    let mut app = app_on(&doc, crate::config::GitConfig::default());
+    let signs = column_of(&mut app, 80, 12, 0);
+    let rows = draw_sized(&mut app, 80, 12);
+    let paragraph = rows
+        .iter()
+        .position(|row| row.contains("alpha") && row.contains("gamma changed"))
+        .expect("the four lines reflowed into one row");
+
+    let (symbol, colour) = signs.get(paragraph).expect("a sign cell for that row");
+    assert_eq!(
+        (symbol.as_str(), *colour),
+        ("\u{2502}", theme.change_changed),
+        "the row shows a changed line but was left unbarred"
+    );
+    std::fs::remove_dir_all(&root).expect("cleanup");
+}
+
 /// The change bar, end to end: real `git diff -U0 HEAD` output reaching the gutter's sign column.
 ///
 /// The only test that builds a repository - every other change bar invariant is pure and lives in

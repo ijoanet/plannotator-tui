@@ -26,6 +26,20 @@ pub(crate) enum ChangeKind {
     Untracked,
 }
 
+impl ChangeKind {
+    /// Which kind wins when one row covers several. Changed outranks added because a line that
+    /// replaced something is the one worth reading twice; untracked ranks last because it says
+    /// only "git has not seen this file", which is true of every line equally.
+    fn rank(self) -> u8 {
+        match self {
+            Self::Untracked => 0,
+            Self::Deleted => 1,
+            Self::Added => 2,
+            Self::Changed => 3,
+        }
+    }
+}
+
 /// A run of lines that differs from `HEAD`, in 1-based lines of the file on disk.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Change {
@@ -50,6 +64,15 @@ impl ChangeBar {
     pub(crate) fn kind_at(&self, byte: usize) -> Option<ChangeKind> {
         let line = self.line_starts.partition_point(|start| *start <= byte).checked_sub(1)?;
         self.signs.get(line).copied().flatten()
+    }
+
+    /// The most telling kind over every byte a row shows.
+    ///
+    /// A row is not a source line. Prose reflows, so one row can carry several source lines, and
+    /// asking only about its first byte hid a modified line whenever an unchanged one happened to
+    /// start the row - which is most of a paragraph. The row is barred if anything in it changed.
+    pub(crate) fn kind_over(&self, bytes: impl Iterator<Item = usize>) -> Option<ChangeKind> {
+        bytes.filter_map(|byte| self.kind_at(byte)).max_by_key(|kind| kind.rank())
     }
 
     /// `changes` mapped onto `source`'s lines.
@@ -319,6 +342,35 @@ mod tests {
         assert_eq!(sign_on_line(&bar, 1), Some(ChangeKind::Added));
         assert_eq!(sign_on_line(&bar, 2), Some(ChangeKind::Added));
         std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    #[test]
+    fn a_row_carrying_several_source_lines_is_barred_if_any_of_them_changed() {
+        // Prose reflows, so one row can show several source lines. Asking only about the row's
+        // first byte hid a modified line whenever an unchanged one started the row, which is most
+        // of a paragraph. Four lines, only the third changed.
+        let source = "alpha\nbeta\ngamma\ndelta\n";
+        let bar = ChangeBar::build(source, &parse_hunks("@@ -3 +3 @@\n-old\n+gamma\n"));
+        let at = |word: &str| source.find(word).expect("word is in the document");
+
+        assert_eq!(bar.kind_at(at("alpha")), None, "the first line alone is unchanged");
+        let row = [at("alpha"), at("beta"), at("gamma"), at("delta")];
+        assert_eq!(
+            bar.kind_over(row.into_iter()),
+            Some(ChangeKind::Changed),
+            "a row covering the changed line is barred even though it starts on an unchanged one"
+        );
+    }
+
+    #[test]
+    fn the_more_telling_kind_wins_when_one_row_covers_two() {
+        // A row showing both an added and a changed line reports changed: a line that replaced
+        // something is worth reading twice, where an added one is simply new.
+        let source = "one\ntwo\nthree\n";
+        let changes = parse_hunks("@@ -2,0 +2 @@\n+two\n@@ -3 +3 @@\n-old\n+three\n");
+        let bar = ChangeBar::build(source, &changes);
+        let both = [source.find("two").expect("two"), source.find("three").expect("three")];
+        assert_eq!(bar.kind_over(both.into_iter()), Some(ChangeKind::Changed));
     }
 
     #[test]

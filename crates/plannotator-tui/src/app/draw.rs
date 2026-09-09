@@ -187,14 +187,16 @@ impl App {
             // Column 0 is the sign column, gitsigns-style; the block marker moves to column 1,
             // closer to the text it marks. A row's first mapped source byte gives its line, and
             // art rows carry no offsets at all, so those fall back to where their block starts.
-            let byte = row
-                .cells
-                .iter()
-                .flatten()
-                .next()
-                .copied()
-                .or_else(|| self.open.doc.blocks.get(block).map(|b| b.range.start));
-            if let Some(kind) = byte.and_then(|byte| self.open.changes.kind_at(byte)) {
+            // Every byte the row shows, not just its first: a reflowed paragraph carries several
+            // source lines, and only one of them needs to have changed.
+            let mut bytes = row.cells.iter().flatten().copied().peekable();
+            let kind = if bytes.peek().is_some() {
+                self.open.changes.kind_over(bytes)
+            } else {
+                // Art has no source bytes of its own, so it answers for its whole block.
+                self.open.doc.blocks.get(block).and_then(|b| self.open.changes.kind_over(b.range.clone()))
+            };
+            if let Some(kind) = kind {
                 let bar = Span::styled("│", Style::new().fg(theme.change(kind)));
                 buf.set_span(gutter.x, screen_y, &bar, 1);
             }
