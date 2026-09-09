@@ -12,6 +12,7 @@ use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
+use unicode_width::UnicodeWidthStr;
 
 use super::send::SendState;
 use super::{App, GUTTER, Mode};
@@ -702,6 +703,29 @@ fn the_footer_hint_never_takes_columns_from_the_status() {
             before.contains("block 1/"),
             "width {width}: the hint cut the status mid-counter: {footer:?}"
         );
+    }
+}
+
+/// The status never claims more columns than the footer has.
+///
+/// Asserted by drawing every width and looking for the whole composed status on screen, not by
+/// measuring any one field: the advisory the status appends below 80 columns made the status
+/// itself longer than the pane, so the terminal cut it mid-word (`rail hidde` at 52 columns,
+/// `widen to` at 64) while every field-level guard still held.
+#[test]
+fn the_footer_status_never_exceeds_the_room_it_has() {
+    let (_root, mut app) = set_app("status-room");
+    for width in 20..=200u16 {
+        let rows = draw_sized(&mut app, width, 12);
+        let footer = rows.last().expect("a footer row").clone();
+        let status = app.footer_status(usize::from(width)).text;
+        assert!(
+            status.width() <= usize::from(width),
+            "width {width}: the status claims {} columns: {status:?}",
+            status.width()
+        );
+        assert!(footer.contains(&status), "width {width}: the status was cut: {footer:?} vs {status:?}");
+        assert!(footer.contains("doc.md"), "width {width}: the document is not named: {footer:?}");
     }
 }
 

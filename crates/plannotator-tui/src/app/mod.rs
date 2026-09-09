@@ -3,6 +3,7 @@
 
 mod compose;
 mod draw;
+mod footer;
 mod header;
 mod help;
 mod input;

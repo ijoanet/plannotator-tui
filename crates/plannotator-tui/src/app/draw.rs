@@ -5,19 +5,19 @@
 use plannotator_tui_schema::Kind;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Modifier, Style, Stylize};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
-use super::{App, Focus, GUTTER, Geometry, Mode, TOOLBAR, glyph, help, label};
+use super::{App, Focus, GUTTER, Geometry, Mode, TOOLBAR, glyph, label};
 use crate::docs::{DocSet, marker_width};
 use crate::wrap::wrap_line;
 
 const RAIL_WIDTH: u16 = 36;
 const RAIL_MIN_WIDTH: u16 = 28;
 /// Below this the rail is dropped and annotations are only marked in the gutter.
-const RAIL_MIN_TOTAL_WIDTH: u16 = 80;
+pub(super) const RAIL_MIN_TOTAL_WIDTH: u16 = 80;
 const COMPOSE_WIDTH: u16 = 48;
 
 /// Painting precedence when annotations overlap a cell.
@@ -347,62 +347,6 @@ impl App {
             next_y = y + height;
         }
         self.geometry.bubbles = bubbles;
-    }
-
-    fn draw_footer(&self, frame: &mut Frame, area: Rect) {
-        if self.mode == Mode::ConfirmQuit {
-            // The question owns the footer: the browse help would name keys that are not
-            // live while it is up.
-            let question = format!(
-                " send feedback to {} before quitting? y send · n quit · esc cancel",
-                self.delivery.describe()
-            );
-            frame.render_widget(Paragraph::new(Line::from(Span::raw(question).bold())), area);
-            return;
-        }
-        let orphans = self.open.store.orphans();
-        // The status leads: it is the transient half of the line, and the name and counters
-        // it pushes right are on screen for the whole session anyway.
-        let mut parts: Vec<String> = self.status.iter().cloned().collect();
-        let counters = [
-            format!(
-                "{} annotations{}",
-                self.open.store.len(),
-                if orphans > 0 { format!(" ({orphans} orphaned)") } else { String::new() }
-            ),
-            match &self.pending {
-                Some(p) => {
-                    let chars = self.open.doc.source.get(p.range.clone()).map_or(0, |s| s.chars().count());
-                    format!("selected {chars} chars")
-                }
-                None => format!("block {}/{}", self.selected + 1, self.open.doc.blocks.len()),
-            },
-        ];
-        // The status is sized first and the hint takes what is left, because the two share this
-        // line: a hint claiming fixed columns cuts the status mid-word, and the status is the half
-        // that says what just happened. The path keeps room for the `?` item, so the overlay stays
-        // discoverable however long the path is.
-        if let Some(path) = self.document_path() {
-            let spent: usize = parts.iter().chain(counters.iter()).map(|p| p.width() + 3).sum::<usize>() + 1;
-            let room =
-                usize::from(area.width).saturating_sub(spent).saturating_sub(help::reserved_hint_width());
-            let home = std::env::home_dir();
-            parts.push(crate::docs::display_path(&path, home.as_deref(), room));
-        } else {
-            parts.push(self.open.source.name.clone());
-        }
-        parts.extend(counters);
-        if frame.area().width < RAIL_MIN_TOTAL_WIDTH {
-            parts.push("rail hidden: widen to ≥80 cols".into());
-        }
-        let status = format!(" {}", parts.join(" · "));
-        // One column of gap, so the hint can never sit flush against the status.
-        let room = usize::from(area.width).saturating_sub(status.width()).saturating_sub(1);
-        let help = help::hint(self.focus, self.pending.is_some(), room);
-        let [left_area, right_area] =
-            Layout::horizontal([Constraint::Min(0), Constraint::Length(help.width() as u16)]).areas(area);
-        frame.render_widget(Paragraph::new(Line::from(Span::raw(status).dim())), left_area);
-        frame.render_widget(Paragraph::new(Line::from(Span::raw(help).dim()).right_aligned()), right_area);
     }
 }
 
