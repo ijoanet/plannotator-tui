@@ -18,6 +18,12 @@ herdr/                    the Herdr plugin manifest. The launcher it runs is
 Markdown parsing is `pulldown-cmark`; rendering to styled text is `tui-markdown`. We never
 interpret markdown ourselves. Anything that needs to know "what is a heading" is a bug.
 
+`src/table.rs` is the one place that lays something out instead of `tui-markdown`: a table's
+columns are sized from content there with no notion of the pane, and `Options` has no width knob,
+so a wide table could only be clipped. Cells still come from `pulldown-cmark`'s event stream with
+source ranges - this is a layout, not a second parser. Widths are display widths, and every
+rendered character keeps its source byte, because the selection map indexes by column. Decision 20.
+
 `src/theme.rs` owns every color, one token per meaning; nothing else may name a color. `src/render.rs`
 carries what rendering needs from outside the layout (theme, art settings, the document's directory),
 so `layout` and `art` share it without importing each other. See `docs/decisions.md` 17.
