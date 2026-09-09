@@ -298,6 +298,9 @@ impl App {
             MouseEventKind::ScrollDown => self.scroll_by(3),
             MouseEventKind::ScrollUp => self.scroll_by(-3),
             MouseEventKind::Down(MouseButton::Left) => {
+                if let Some(index) = self.tab_hit(mouse.column, mouse.row) {
+                    return self.show_document(index);
+                }
                 if self.send_button_hit(mouse.column, mouse.row) {
                     self.send_feedback()?;
                     return Ok(());
@@ -366,6 +369,19 @@ impl App {
         self.geometry
             .send_button
             .is_some_and(|rect| row == rect.y && column >= rect.x && column < rect.right())
+    }
+
+    /// The document a click on the tab row would open.
+    fn tab_hit(&self, column: u16, row: u16) -> Option<usize> {
+        // The tab row is row 0 when it is drawn at all; an empty span list means one document.
+        if row != 0 {
+            return None;
+        }
+        self.geometry
+            .tabs
+            .iter()
+            .find(|(span, _)| column >= span.start && column < span.end)
+            .map(|(_, index)| *index)
     }
 
     fn toolbar_hit(&self, column: u16, row: u16) -> Option<Kind> {

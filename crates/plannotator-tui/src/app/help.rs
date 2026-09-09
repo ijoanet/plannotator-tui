@@ -193,8 +193,14 @@ fn hint_width(items: &[String]) -> usize {
 /// Items shed from the end until it fits, and the whole hint goes if even one will not: the status
 /// shares this line and leads it, so a hint that cannot fit must cost keys rather than cost the
 /// message saying what just happened. Half a key name would be worse than one fewer key.
+/// The footer carries **only** `?`.
+///
+/// It used to list every hinted key, which spent a third of a narrow row restating what the
+/// overlay says in full. One item is enough: `?` is how the rest is found, and the columns are
+/// worth more to the document's path. The shedding logic stays because the item still has to fit.
 pub(super) fn hint(focus: Focus, pending: bool, room: usize) -> String {
     let mut shown = hint_items(focus, pending);
+    shown.truncate(1);
     while !shown.is_empty() && hint_width(&shown) > room {
         shown.pop();
     }
@@ -413,45 +419,22 @@ mod tests {
     }
 
     #[test]
-    fn the_footer_hint_changes_with_what_is_focused() {
-        let document = hint(Focus::Document, false, usize::MAX);
-        assert!(document.contains("v select"), "{document}");
-        assert!(document.contains("? keys"), "the overlay is always reachable: {document}");
-        assert!(document.contains("A close"), "the global keys ride the document line: {document}");
-        assert!(!document.contains("looks good"), "no verdict keys without a selection: {document}");
-
-        let selection = hint(Focus::Document, true, usize::MAX);
-        assert!(selection.contains("a looks good"), "{selection}");
-        assert!(selection.contains("? keys"), "{selection}");
-
-        let rail = hint(Focus::Rail, false, usize::MAX);
-        assert!(rail.contains("e edit") && rail.contains("x remove"), "{rail}");
-        assert!(!rail.contains("v select"), "document keys are not live in the rail: {rail}");
+    fn the_footer_carries_only_the_overlay_key_whatever_is_focused() {
+        // It used to list every hinted key for the scope, which spent a third of a narrow row
+        // restating the overlay. One item is the whole hint now, and it does not vary.
+        for (focus, pending) in [(Focus::Document, false), (Focus::Document, true), (Focus::Rail, false)] {
+            let shown = hint(focus, pending, usize::MAX);
+            assert_eq!(shown.trim_end(), "? keys", "{focus:?}/{pending} showed {shown:?}");
+        }
     }
 
-    /// Items shed from the end, and `?` is the last to go, because it is how the rest is found.
-    ///
-    /// The behaviour that matters (the hint never costing the status columns) is asserted through
-    /// the rendered footer in `app::tests`, not here: a width ceiling on this string was the proxy
-    /// that let the status get overwritten for three widths while this test passed.
     #[test]
-    fn a_hint_sheds_items_to_fit_and_keeps_the_overlay_longest() {
-        let full = hint(Focus::Document, false, usize::MAX);
-        assert!(full.contains("v select") && full.contains("? keys"), "{full}");
-
-        let tight = hint(Focus::Document, false, 20);
-        assert!(tight.width() <= 20, "{tight:?} is wider than the room it was given");
-        assert!(tight.contains("? keys"), "the overlay survives a tight line: {tight:?}");
-        assert!(!tight.contains("v select"), "later items shed first: {tight:?}");
-
-        // Room for nothing is not room for half a key name.
-        assert_eq!(hint(Focus::Document, false, 3), "");
+    fn the_hint_disappears_rather_than_being_cut_in_half() {
+        assert_eq!(hint(Focus::Document, false, usize::MAX).trim_end(), "? keys");
+        // Exactly enough, and one column short of enough.
+        let exact = hint(Focus::Document, false, "? keys ".width());
+        assert_eq!(exact.trim_end(), "? keys");
+        assert_eq!(hint(Focus::Document, false, 3), "", "no room is not room for half a key name");
         assert_eq!(hint(Focus::Document, false, 0), "");
-
-        // Every scope offers the overlay, so no focus can strand the reader.
-        for (focus, pending) in [(Focus::Document, true), (Focus::Rail, false)] {
-            let tight = hint(focus, pending, 12);
-            assert!(tight.contains('?'), "{focus:?} pending={pending}: {tight:?}");
-        }
     }
 }

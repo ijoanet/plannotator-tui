@@ -2,6 +2,8 @@
 //! floating toolbar and compose box. Pure over `App` except for recording geometry for
 //! hit-testing.
 
+use std::ops::Range;
+
 use plannotator_tui_schema::Kind;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -58,8 +60,14 @@ impl App {
             Constraint::Length(rail_width),
         ])
         .areas(body);
-        self.geometry =
-            Geometry { doc, toolbar: None, bubbles: Vec::new(), send_button: None, pick_rows: Vec::new() };
+        self.geometry = Geometry {
+            doc,
+            toolbar: None,
+            bubbles: Vec::new(),
+            send_button: None,
+            pick_rows: Vec::new(),
+            tabs: Vec::new(),
+        };
 
         if self.open.layout.width != usize::from(doc.width) {
             self.open.layout.reflow(usize::from(doc.width));
@@ -88,7 +96,7 @@ impl App {
 
     /// The tab row: one tab per presented document, the open one highlighted, each with its
     /// annotation count. Tabs that do not fit become a count at the edge they went past.
-    fn draw_tabs(&self, frame: &mut Frame, area: Rect) {
+    fn draw_tabs(&mut self, frame: &mut Frame, area: Rect) {
         let theme = self.render.theme;
         let Some(set) = &self.docs else { return };
         let width = usize::from(area.width);
@@ -102,15 +110,23 @@ impl App {
             .saturating_sub(marker_width(row.hidden_before))
             .saturating_sub(marker_width(row.hidden_after));
         let mut used = 0usize;
+        let mut spans_at = usize::from(area.x) + marker_width(row.hidden_before);
+        let mut clickable: Vec<(Range<u16>, usize)> = Vec::new();
         for index in row.visible.clone() {
             let Some(doc) = set.docs().get(index) else { continue };
             if index != row.visible.start {
                 spans.push(Span::styled("\u{2502}", Style::new().fg(theme.border)));
                 used += 1;
+                spans_at += 1;
             }
             let label = DocSet::label(doc);
             let room = budget.saturating_sub(used);
             let label = if label.width() > room { truncate(&label, room) } else { label };
+            // The span a click lands in, recorded where it is laid out: nothing else knows it.
+            let start = u16::try_from(spans_at).unwrap_or(u16::MAX);
+            let end = u16::try_from(spans_at + label.width()).unwrap_or(u16::MAX);
+            clickable.push((start..end, index));
+            spans_at += label.width();
             used += label.width();
             let style = if index == set.current() {
                 Style::new().fg(theme.accent).add_modifier(Modifier::BOLD)
@@ -126,6 +142,7 @@ impl App {
             spans.push(Span::styled(format!(" {}\u{203a}", row.hidden_after), Style::new().fg(theme.muted)));
         }
         frame.render_widget(Paragraph::new(Line::from(spans)), area);
+        self.geometry.tabs = clickable;
     }
 
     fn draw_document(&self, frame: &mut Frame, gutter: Rect, doc: Rect) {

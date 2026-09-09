@@ -15,7 +15,7 @@ use ratatui::crossterm::event::{
 use unicode_width::UnicodeWidthStr;
 
 use super::send::SendState;
-use super::{App, GUTTER, Mode};
+use super::{App, Focus, GUTTER, Mode};
 use crate::delivery::{Delivery, Discard, HerdrAgent};
 use crate::render::RenderSettings;
 
@@ -461,16 +461,16 @@ fn one_document_shows_no_tab_row_and_a_set_shows_one() {
 #[test]
 fn n_moves_focus_between_the_document_and_its_notes() {
     let mut app = app(Box::new(Discard));
-    assert_eq!(app.focus, super::Focus::Document);
+    assert_eq!(app.focus, Focus::Document);
     // Nothing to focus while there are no annotations.
     app.handle_event(&key(KeyCode::Char('n'), KeyModifiers::NONE)).expect("n");
-    assert_eq!(app.focus, super::Focus::Document, "an empty rail is not worth focusing");
+    assert_eq!(app.focus, Focus::Document, "an empty rail is not worth focusing");
 
     app.add_block_annotation(0, Kind::Comment, "note".to_owned()).expect("annotation");
     app.handle_event(&key(KeyCode::Char('n'), KeyModifiers::NONE)).expect("n");
-    assert_eq!(app.focus, super::Focus::Rail);
+    assert_eq!(app.focus, Focus::Rail);
     app.handle_event(&key(KeyCode::Char('n'), KeyModifiers::NONE)).expect("n");
-    assert_eq!(app.focus, super::Focus::Document, "n comes back");
+    assert_eq!(app.focus, Focus::Document, "n comes back");
 }
 
 #[test]
@@ -731,12 +731,15 @@ fn the_footer_status_never_exceeds_the_room_it_has() {
 
 /// A wide pane shows the whole hint; the shedding must not be one-way.
 #[test]
-fn a_wide_footer_shows_every_hint_item() {
+fn even_a_wide_footer_advertises_only_the_overlay() {
+    // Width is not a reason to restate the overlay. The keys live behind `?`, and the row is
+    // worth more to the document's path than to a list nobody reads twice.
     let mut app = app(Box::new(Discard));
     let rows = draw_sized(&mut app, 200, 12);
     let footer = rows.last().expect("a footer row").clone();
-    for item in ["? keys", "E send", "A close", "q quit", "v select"] {
-        assert!(footer.contains(item), "{item} missing at 200 columns: {footer:?}");
+    assert!(footer.contains("? keys"), "the overlay must stay discoverable: {footer:?}");
+    for item in ["E send", "A close", "q quit", "v select"] {
+        assert!(!footer.contains(item), "{item} is behind ? now, not in the footer: {footer:?}");
     }
 }
 
@@ -987,4 +990,39 @@ fn the_change_bar_signs_the_gutters_first_column_from_what_git_reports() {
         "signs are off, yet the sign column was drawn: {silent:?}"
     );
     std::fs::remove_dir_all(&root).expect("cleanup");
+}
+
+#[test]
+fn clicking_a_tab_opens_that_document() {
+    let (_root, mut app) = set_app("click");
+    let opened = |app: &App| match &app.open.source.provenance {
+        Provenance::File { path } => path.clone(),
+        _ => PathBuf::new(),
+    };
+    let first = opened(&app);
+
+    // Draw so the tab spans are recorded, then click inside the SECOND tab's span. The span is
+    // taken from geometry rather than guessed, because guessing a column would pass on an empty
+    // tab row too.
+    draw_sized(&mut app, 80, 12);
+    let (span, index) = app.geometry.tabs.get(1).cloned().expect("a second tab was drawn");
+    assert_eq!(index, 1, "spans are recorded in document order");
+    app.handle_event(&click_at(span.start, 0)).expect("click the tab");
+
+    assert_ne!(opened(&app), first, "the click opened the other document");
+    assert_eq!(app.focus, Focus::Document, "and put focus back in the document");
+}
+
+#[test]
+fn a_click_beside_the_tabs_opens_nothing() {
+    let (_root, mut app) = set_app("click-miss");
+    let opened = |app: &App| match &app.open.source.provenance {
+        Provenance::File { path } => path.clone(),
+        _ => PathBuf::new(),
+    };
+    let first = opened(&app);
+    draw_sized(&mut app, 80, 12);
+    let past = app.geometry.tabs.last().map_or(0, |(span, _)| span.end) + 2;
+    app.handle_event(&click_at(past, 0)).expect("click past the last tab");
+    assert_eq!(opened(&app), first, "empty space in the tab row is not a tab");
 }

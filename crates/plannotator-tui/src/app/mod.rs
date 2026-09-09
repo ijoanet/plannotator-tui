@@ -78,6 +78,9 @@ struct Geometry {
     send_button: Option<Rect>,
     /// Picker rows drawn last frame, with their candidate index.
     pick_rows: Vec<(Rect, usize)>,
+    /// Column span of each tab drawn last frame, with the document it opens. Only visible tabs
+    /// are here: a hidden one has no span to click, and `Tab` reaches it.
+    tabs: Vec<(Range<u16>, usize)>,
 }
 
 /// A finished selection waiting for an action.
@@ -298,6 +301,27 @@ impl App {
     pub(crate) fn cycle_document(&mut self) -> Result<()> {
         let Some((index, path)) = self.docs.as_ref().and_then(DocSet::next) else { return Ok(()) };
         let total = self.docs.as_ref().map_or(0, DocSet::len);
+        self.open_doc(&path)?;
+        let name =
+            path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+        self.status = Some(format!("{name} ({}/{total})", index + 1));
+        Ok(())
+    }
+
+    /// Open the document at `index` in the set, for a click on its tab.
+    ///
+    /// Clicking the tab already open is not a no-op by accident: it re-reads nothing, but it does
+    /// return focus to the document, which is what a click on a tab means.
+    pub(crate) fn show_document(&mut self, index: usize) -> Result<()> {
+        let Some(path) = self.docs.as_ref().and_then(|set| set.docs().get(index).map(|d| d.path.clone()))
+        else {
+            return Ok(());
+        };
+        let total = self.docs.as_ref().map_or(0, DocSet::len);
+        if matches!(&self.open.source.provenance, Provenance::File { path: open } if *open == path) {
+            self.focus = Focus::Document;
+            return Ok(());
+        }
         self.open_doc(&path)?;
         let name =
             path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
