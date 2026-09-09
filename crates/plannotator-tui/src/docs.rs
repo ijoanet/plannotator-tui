@@ -28,7 +28,8 @@ const WALK_BUDGET: usize = 2_000;
 #[derive(Debug, Clone)]
 pub(crate) struct Doc {
     pub(crate) path: PathBuf,
-    /// Path relative to the set's root, so two files both called `doc.md` stay apart.
+    /// What the tab shows: the file name, lengthened only far enough to tell it from another
+    /// document that would read the same.
     pub(crate) name: String,
     pub(crate) annotations: usize,
 }
@@ -44,16 +45,13 @@ pub(crate) struct DocSet {
 impl DocSet {
     /// Exactly these files, in name order.
     pub(crate) fn of_files(root: &Path, files: &[PathBuf]) -> Self {
-        let mut docs: Vec<Doc> = files
-            .iter()
-            .map(|path| Doc {
-                name: path.strip_prefix(root).unwrap_or(path).to_string_lossy().into_owned(),
-                path: path.clone(),
-                annotations: 0,
-            })
-            .collect();
+        let mut paths: Vec<PathBuf> = files.to_vec();
+        paths.sort();
+        paths.dedup();
+        let names = disambiguate(&paths);
+        let mut docs: Vec<Doc> =
+            paths.into_iter().zip(names).map(|(path, name)| Doc { path, name, annotations: 0 }).collect();
         docs.sort_by(|a, b| a.name.cmp(&b.name));
-        docs.dedup_by(|a, b| a.path == b.path);
         Self { root: root.to_path_buf(), docs, current: 0 }
     }
 
@@ -82,6 +80,11 @@ impl DocSet {
 
     pub(crate) fn current_path(&self) -> Option<&Path> {
         self.docs.get(self.current).map(|d| d.path.as_path())
+    }
+
+    /// The tab name for `path`, when it is in the set.
+    pub(crate) fn name_for(&self, path: &Path) -> Option<&str> {
+        self.docs.iter().find(|d| d.path == path).map(|d| d.name.as_str())
     }
 
     /// Point at `path` when it is in the set, so the tab row follows what is on screen.
@@ -140,6 +143,48 @@ pub(crate) struct TabRow {
 /// Columns an edge marker needs: `‹12 ` and ` 12›` are both the digits plus two.
 pub(crate) fn marker_width(hidden: usize) -> usize {
     if hidden == 0 { 0 } else { 2 + hidden.to_string().len() }
+}
+
+/// The last `depth` components of a path, joined for display.
+fn tail(parts: &[String], depth: usize) -> String {
+    let start = parts.len().saturating_sub(depth.max(1));
+    parts.get(start..).map_or_else(String::new, |rest| rest.join("/"))
+}
+
+fn components(path: &Path) -> Vec<String> {
+    path.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect()
+}
+
+/// Tab names: the file name, gaining one parent at a time only where two documents would
+/// otherwise read the same.
+///
+/// This is the rule editors use. Naming every tab by its path relative to a common root instead
+/// lengthens documents that do not collide, because some unrelated pair did: `plan.md` should stay
+/// `plan.md` when `one/doc.md` and `two/doc.md` are also open.
+fn disambiguate(paths: &[PathBuf]) -> Vec<String> {
+    let parts: Vec<Vec<String>> = paths.iter().map(|p| components(p)).collect();
+    let mut depth: Vec<usize> = vec![1; parts.len()];
+    loop {
+        let names: Vec<String> = parts.iter().zip(&depth).map(|(p, d)| tail(p, *d)).collect();
+        let mut next = depth.clone();
+        let mut grew = false;
+        for (index, name) in names.iter().enumerate() {
+            let collides = names.iter().enumerate().any(|(other, seen)| other != index && seen == name);
+            let room = parts.get(index).is_some_and(|p| depth.get(index).is_some_and(|d| *d < p.len()));
+            if collides
+                && room
+                && let Some(d) = next.get_mut(index)
+            {
+                *d += 1;
+                grew = true;
+            }
+        }
+        // Depth only ever grows and is bounded by the path's own length, so this settles.
+        if !grew {
+            return names;
+        }
+        depth = next;
+    }
 }
 
 /// Grow a window outwards from the open tab while it still fits.
@@ -255,8 +300,9 @@ mod tests {
         let root = fixture("folder");
         let set = DocSet::of_folder(&root).expect("expands");
         let names: Vec<&str> = set.docs().iter().map(|d| d.name.as_str()).collect();
-        // Hidden entries, node_modules, the symlink loop and non-Markdown are all skipped.
-        assert_eq!(names, ["a.MD", "b.md", "docs/deep/plan.md"]);
+        // Hidden entries, node_modules, the symlink loop and non-Markdown are all skipped. None of
+        // these three collide, so each keeps its bare file name.
+        assert_eq!(names, ["a.MD", "b.md", "plan.md"]);
         std::fs::remove_dir_all(&root).expect("cleanup");
     }
 
@@ -283,11 +329,28 @@ mod tests {
     }
 
     #[test]
-    fn a_set_keeps_same_named_files_apart_by_their_relative_path() {
+    fn a_tab_is_named_by_its_file_and_grows_only_to_break_a_collision() {
         let root = PathBuf::from("/set");
-        let set = DocSet::of_files(&root, &[root.join("two/doc.md"), root.join("one/doc.md")]);
+        let set = DocSet::of_files(
+            &root,
+            &[root.join("two/doc.md"), root.join("one/doc.md"), root.join("plan.md")],
+        );
         let names: Vec<&str> = set.docs().iter().map(|d| d.name.as_str()).collect();
-        assert_eq!(names, ["one/doc.md", "two/doc.md"], "sorted by the name shown");
+        // The two `doc.md`s gain a parent each; `plan.md` collides with nothing and stays short.
+        assert_eq!(names, ["one/doc.md", "plan.md", "two/doc.md"]);
+    }
+
+    #[test]
+    fn a_collision_grows_only_as_far_as_it_must() {
+        let root = PathBuf::from("/set");
+        // Same file name three deep: one parent separates two of them, two are needed for the third.
+        let set = DocSet::of_files(
+            &root,
+            &[root.join("a/api/spec.md"), root.join("b/api/spec.md"), root.join("c/spec.md")],
+        );
+        let mut names: Vec<&str> = set.docs().iter().map(|d| d.name.as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(names, ["a/api/spec.md", "b/api/spec.md", "c/spec.md"]);
     }
 
     #[test]
