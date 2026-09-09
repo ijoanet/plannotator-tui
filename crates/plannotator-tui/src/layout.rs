@@ -439,6 +439,34 @@ mod tests {
         assert_eq!(coloured, crate::code::HIGHLIGHT_CEILING, "the ceiling bounds what is coloured");
     }
 
+    /// A block past the ceiling is plain, not unanchored: its text still quotes.
+    ///
+    /// The ceiling is a rendering economy, so it must not cost anchoring. Nothing asserted this,
+    /// and the failure would be quiet: the block draws, so it looks fine, but a comment on it
+    /// would store the wrong quote or none at all.
+    #[test]
+    fn a_block_past_the_highlight_ceiling_still_resolves_a_quote() {
+        let over = crate::code::HIGHLIGHT_CEILING + 5;
+        let doc = code_document(over);
+        let layout = DocLayout::build(&doc, 60, &RenderContext::text_only());
+        let theme = Theme::default();
+
+        let last = over - 1;
+        let needle = format!("echo {last}");
+        let at = doc.source.find(&needle).expect("the last block is in the source");
+        let block = layout.blocks.last().expect("the last block");
+        assert!(!is_highlighted(block, theme), "the last block is past the ceiling");
+
+        assert_eq!(
+            layout.rendered_in_range(&doc.source, &(at..at + needle.len())),
+            needle,
+            "a quote in a past-ceiling block still resolves"
+        );
+        // And the columns drawing it point back at it, which is what a selection reads.
+        let mapped: Vec<usize> = block.rows.iter().flat_map(|r| r.cells.iter().flatten().copied()).collect();
+        assert!(mapped.contains(&at), "the byte under the drawn text is the byte it came from: {mapped:?}");
+    }
+
     /// A scratch directory holding one opaque PNG of `size` × `size` pixels.
     fn image_dir(name: &str, size: u32) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("plannotator-tui-layout-{}-{name}", std::process::id()));

@@ -766,3 +766,32 @@ fn a_short_pane_admits_the_overlay_is_cut() {
     let roomy = draw_sized(&mut app, 160, 40).join("\n");
     assert_eq!(admitted_shortfall(&roomy), 0, "nothing is hidden with room to spare:\n{roomy}");
 }
+
+/// A document with an annotation on it is never reported as approved.
+///
+/// `A` decides approval by set membership over `annotated_files`, which unions the on-disk records
+/// with the set's in-memory counts. Any disagreement between those two lists about a path's form
+/// makes an annotated document look clean, which is the worst thing this feature can get wrong: it
+/// tells the agent its work was accepted while the objection sits unread on screen.
+#[test]
+fn a_document_with_an_annotation_is_never_reported_as_approved() {
+    let (root, mut app) = set_app("never-approved");
+    app.add_block_annotation(0, Kind::Comment, "this needs work".to_owned()).expect("annotation");
+
+    let review = app.review_feedback().expect("composes the review");
+    let set = app.docs.as_ref().expect("a set");
+    let annotated =
+        set.name_for(&root.join("one/doc.md")).expect("the annotated document is named").to_owned();
+    let clean = set.name_for(&root.join("two/doc.md")).expect("the clean document is named").to_owned();
+
+    for line in review.lines().filter(|l| l.starts_with("## ")) {
+        if line.contains(&annotated) {
+            assert!(!line.contains("looks good"), "the annotated document was approved: {line:?}\n{review}");
+        }
+    }
+    assert!(review.contains("this needs work"), "the objection is in the review:\n{review}");
+    assert!(
+        review.lines().any(|l| l.starts_with("## ") && l.contains(&clean) && l.contains("looks good")),
+        "the untouched document is still approved:\n{review}"
+    );
+}
