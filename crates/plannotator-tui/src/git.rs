@@ -165,7 +165,12 @@ pub(crate) fn change_bar(path: Option<&Path>, source: &str, signs: bool) -> Chan
     if !signs {
         return ChangeBar::default();
     }
-    let Some((path, dir)) = path.and_then(|p| Some((p, p.parent()?))) else {
+    // Resolve symlinks before asking git anything. Every skill here is reached through a
+    // symlinked directory, and git rejects a pathspec that is outside the worktree it resolved:
+    // `git -C <symlink> diff HEAD -- <symlinked path>` fails with "is outside repository", which
+    // this function used to read as "untracked" and bar every line of a tracked file.
+    let resolved = path.map(|p| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf()));
+    let Some((path, dir)) = resolved.as_deref().and_then(|p| Some((p, p.parent()?))) else {
         return ChangeBar::default();
     };
     if git(dir, &["rev-parse", "--show-toplevel"], None).is_none_or(|top| top.trim().is_empty()) {
@@ -371,6 +376,38 @@ mod tests {
         let bar = ChangeBar::build(source, &changes);
         let both = [source.find("two").expect("two"), source.find("three").expect("three")];
         assert_eq!(bar.kind_over(both.into_iter()), Some(ChangeKind::Changed));
+    }
+
+    #[test]
+    fn a_file_reached_through_a_symlink_is_read_like_the_real_path() {
+        // Every skill in this setup is reached through a symlinked directory, so this is the
+        // common case, not an edge one. git resolves the -C directory but rejects a pathspec that
+        // then sits outside the worktree ("is outside repository"), and a failed pathspec used to
+        // mean untracked - so a tracked file with one changed line had every line barred.
+        let dir = scratch_repo("symlink");
+        let real = dir.join("doc.md");
+        std::fs::write(&real, "one\ntwo\n").expect("write");
+        git_in(&dir, &["add", "doc.md"]);
+        git_in(&dir, &["commit", "--quiet", "-m", "seed"]);
+        std::fs::write(&real, "one\ntwo changed\n").expect("edit");
+
+        let link_dir = dir.parent().expect("parent").join(format!("{}-link", "symlink-target"));
+        let _ = std::fs::remove_file(&link_dir);
+        std::os::unix::fs::symlink(&dir, &link_dir).expect("symlink the directory");
+        let through_link = link_dir.join("doc.md");
+
+        let direct = change_bar(Some(&real), "one\ntwo changed\n", true);
+        let linked = change_bar(Some(&through_link), "one\ntwo changed\n", true);
+        assert_eq!(
+            (linked.kind_at(0), linked.kind_at(4)),
+            (direct.kind_at(0), direct.kind_at(4)),
+            "the symlinked path disagreed with the real one"
+        );
+        assert_eq!(linked.kind_at(0), None, "the unchanged line is not barred");
+        assert_eq!(linked.kind_at(4), Some(ChangeKind::Changed), "the changed line is");
+
+        let _ = std::fs::remove_file(&link_dir);
+        std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 
     #[test]
