@@ -18,6 +18,10 @@ impl App {
                 Mode::Browse => self.browse_key(*key),
                 Mode::ConfirmQuit => self.confirm_quit_key(*key),
                 Mode::Pick => self.pick_key(*key),
+                Mode::Help => {
+                    self.help_key(*key);
+                    Ok(())
+                }
                 Mode::Compose | Mode::Edit(_) => self.text_key(*key),
             },
             // A paste lands in the comment box verbatim, newlines included; anywhere else
@@ -51,6 +55,10 @@ impl App {
                 return Ok(());
             }
             (KeyCode::Char('A'), _) => return self.send_and_close(),
+            (KeyCode::Char('?'), _) => {
+                self.mode = Mode::Help;
+                return Ok(());
+            }
             (KeyCode::Char('r'), _) => return self.reload(),
             (KeyCode::Char('p'), _) => {
                 self.reopen_picker();
@@ -84,6 +92,14 @@ impl App {
             _ => {}
         }
         Ok(())
+    }
+
+    /// The keymap overlay is a reader, not a mode with actions: any of `?`, Esc or `q` leaves it,
+    /// and `q` closes the list rather than the app so it cannot be a surprising way to quit.
+    fn help_key(&mut self, key: KeyEvent) {
+        if matches!(key.code, KeyCode::Char('?' | 'q') | KeyCode::Esc) {
+            self.mode = Mode::Browse;
+        }
     }
 
     /// `n` moves between the document and its notes, which is all `Tab` had left to cycle.
@@ -261,7 +277,7 @@ impl App {
                             self.status = Some("annotation updated".into());
                         }
                     }
-                    Mode::Compose | Mode::Browse | Mode::ConfirmQuit | Mode::Pick => {
+                    Mode::Compose | Mode::Browse | Mode::ConfirmQuit | Mode::Pick | Mode::Help => {
                         if !body.is_empty()
                             && let Some(pending) = self.pending.take()
                         {

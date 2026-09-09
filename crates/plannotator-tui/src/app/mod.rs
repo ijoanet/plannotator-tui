@@ -4,6 +4,7 @@
 mod compose;
 mod draw;
 mod header;
+mod help;
 mod input;
 
 mod pick;
@@ -53,6 +54,8 @@ enum Mode {
     ConfirmQuit,
     /// Choosing which of the agent's recent messages to review.
     Pick,
+    /// The `?` keymap overlay.
+    Help,
 }
 
 /// Which pane keyboard input goes to.
@@ -326,6 +329,15 @@ impl App {
         }
     }
 
+    /// The open document's path, when it came from a file. The footer shows it in full;
+    /// stdin and a reply have no path to show.
+    fn document_path(&self) -> Option<PathBuf> {
+        match &self.open.source.provenance {
+            Provenance::File { path } => Some(path.clone()),
+            _ => None,
+        }
+    }
+
     pub(crate) fn set_status(&mut self, status: String) {
         self.status = Some(status);
     }
@@ -416,14 +428,14 @@ impl App {
         let mut out = String::new();
         for path in self.annotated_files() {
             let open = Open::new(read_file(&path)?, width, &self.data_dir, &self.project, &self.render)?;
-            let _ = writeln!(out, "{}", Self::feedback_for(&open, &self.document_label(set, &path)));
+            let _ = writeln!(out, "{}", Self::feedback_for(&open, &Self::document_label(set, &path)));
         }
         Ok(if out.is_empty() { "No annotations.".to_owned() } else { out })
     }
 
     /// What to call `path` in a message: the tab's own name when it is in the set, so the agent
     /// reads the same label that is on screen. Otherwise its path relative to the set's root.
-    fn document_label(&self, set: &DocSet, path: &Path) -> String {
+    fn document_label(set: &DocSet, path: &Path) -> String {
         set.name_for(path).map_or_else(
             || path.strip_prefix(set.root()).unwrap_or(path).display().to_string(),
             ToOwned::to_owned,
@@ -449,7 +461,7 @@ impl App {
         let annotated = self.annotated_files();
         let mut out = format!("# Review of {} documents\n\n", set.len());
         for doc in set.docs() {
-            let label = self.document_label(set, &doc.path);
+            let label = Self::document_label(set, &doc.path);
             if !annotated.contains(&doc.path) {
                 let _ = writeln!(out, "## {label} \u{2014} {APPROVED}\n");
                 continue;

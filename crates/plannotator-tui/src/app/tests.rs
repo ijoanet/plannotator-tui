@@ -572,7 +572,7 @@ fn a_narrow_tab_row_keeps_the_open_document_and_counts_the_rest() {
 
 #[test]
 fn a_reports_a_clean_document_as_approved_without_inventing_an_annotation() {
-    let (_root, mut app) = set_app("clean-prose");
+    let (root, mut app) = set_app("clean-prose");
     // Only one of the two documents is annotated; the other is clean.
     app.add_block_annotation(0, Kind::Comment, "about one".to_owned()).expect("annotate one");
 
@@ -591,7 +591,7 @@ fn a_reports_a_clean_document_as_approved_without_inventing_an_annotation() {
     assert_eq!(app.exit, super::Exit::QuitAndClosePane);
     // The approval was prose. Nothing may have been written against the clean document, or a
     // later --export would replay a note that was never made.
-    let clean = _root.join("two/doc.md");
+    let clean = root.join("two/doc.md");
     let store = crate::store::Store::load(
         &crate::store::Location::for_file(&app.data_dir, &app.project, &clean),
         &crate::doc::Document::parse("# Two\n\nbeta\n".to_owned()),
@@ -617,7 +617,47 @@ fn a_hands_over_an_entirely_clean_set_where_e_has_nothing_to_send() {
 
 #[test]
 fn a_lone_clean_document_is_approved_by_name() {
-    let mut app = app(Box::new(Discard));
+    let app = app(Box::new(Discard));
     let review = app.review_feedback().expect("review");
     assert_eq!(review, "# Review of plan.md\n\nlooks good, no changes requested.\n");
+}
+
+#[test]
+fn the_footer_names_the_document_by_path_not_just_its_file_name() {
+    let (root, mut app) = set_app("footer-path");
+    let rows = draw_sized(&mut app, 100, 12);
+    let footer = row(&rows, rows.len() - 1);
+    // The tab row already shows the bare name; the footer says which file on disk it is.
+    assert!(footer.contains("one/doc.md"), "footer was {footer:?}");
+    assert!(
+        footer.contains(&root.display().to_string()) || footer.contains('\u{2026}'),
+        "the path is shown in full or elided, never replaced by the name alone: {footer:?}"
+    );
+}
+
+#[test]
+fn a_document_with_no_path_falls_back_to_its_name() {
+    // A reply or stdin has no file behind it, so there is nothing to spell out.
+    let mut app = app(Box::new(Discard));
+    let rows = draw(&mut app);
+    let footer = row(&rows, rows.len() - 1);
+    assert!(footer.contains("plan.md"), "footer was {footer:?}");
+}
+
+#[test]
+fn the_keymap_overlay_opens_on_question_mark_and_closes_on_any_of_its_exits() {
+    for closing in [KeyCode::Char('?'), KeyCode::Esc, KeyCode::Char('q')] {
+        let mut app = app(Box::new(Discard));
+        app.handle_event(&key(KeyCode::Char('?'), KeyModifiers::NONE)).expect("open");
+        assert_eq!(app.mode, Mode::Help);
+        let rows = draw(&mut app);
+        let shown = rows.join("\n");
+        assert!(shown.contains("send everything, approve the rest, close"), "A is described: {shown}");
+        assert!(shown.contains("next document"), "Tab is described: {shown}");
+
+        app.handle_event(&key(closing, KeyModifiers::NONE)).expect("close");
+        assert_eq!(app.mode, Mode::Browse, "{closing:?} closes the list");
+        // `q` closes the overlay rather than the app: quitting from a help screen would surprise.
+        assert_eq!(app.exit, super::Exit::Stay, "{closing:?} left the app running");
+    }
 }
