@@ -17,12 +17,12 @@
 
 use pulldown_cmark::{Event, Parser, Tag, TagEnd};
 use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span, Text};
-use unicode_width::UnicodeWidthChar;
+use ratatui::text::{Line, Text};
 
 use crate::doc::parse_options;
 use crate::srcmap::LineOffsets;
 use crate::theme::Theme;
+use crate::wrap::Painted;
 
 /// A cell's characters, each with the source byte it came from.
 type Cell = Vec<(char, Option<usize>)>;
@@ -37,7 +37,7 @@ const RECORD_GAP: usize = 1;
 const LABEL_HEADROOM: usize = 12;
 
 /// One output cell: a character, its source byte, and how to paint it.
-type Painted = (char, Option<usize>, Style);
+/// Shared with the code-block layout; see `wrap::Painted`.
 
 /// Render one table block to fit `width`, as a table if it can be, else as records.
 pub(crate) fn render(
@@ -170,21 +170,13 @@ fn body(row: &[Cell], widths: &[usize], text: Style, border: Style) -> Vec<Vec<P
 
 /// Add one line, merging equal-styled runs into spans.
 fn push(lines: &mut Vec<Line<'static>>, offsets: &mut Vec<LineOffsets>, painted: Vec<Painted>) {
-    let mut spans: Vec<Span<'static>> = Vec::new();
-    let mut map: LineOffsets = Vec::new();
-    for (ch, at, style) in painted {
-        match spans.last_mut() {
-            Some(last) if last.style == style => last.content.to_mut().push(ch),
-            _ => spans.push(Span::styled(ch.to_string(), style)),
-        }
-        map.extend(std::iter::repeat_n(at, display_width(ch).max(1)));
-    }
-    lines.push(Line::from(spans));
+    let (line, map) = crate::wrap::paint(&painted);
+    lines.push(line);
     offsets.push(map);
 }
 
 fn display_width(ch: char) -> usize {
-    ch.width().unwrap_or(0)
+    crate::wrap::display_width(ch)
 }
 
 fn cell_width(cell: &Cell) -> usize {
