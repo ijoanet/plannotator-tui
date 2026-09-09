@@ -165,21 +165,6 @@ fn clicking_the_send_button_sends() {
     assert!(index.is_file(), "the send was archived under the test's own data dir");
 }
 
-#[test]
-fn quitting_with_unsent_feedback_asks_before_it_quits() {
-    let mut app = app(agent());
-    app.add_block_annotation(0, Kind::Comment, "x".to_owned()).expect("annotation");
-    app.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('q')))).expect("q");
-    assert_eq!(app.mode, Mode::ConfirmQuit);
-    assert_eq!(app.exit, super::Exit::Stay, "the question is asked instead of quitting");
-    let rows = draw(&mut app);
-    let footer = row(&rows, 19);
-    assert!(footer.contains("before quitting? y send · n quit · esc cancel"), "footer was {footer:?}");
-    app.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('n')))).expect("n");
-    assert_eq!(app.exit, super::Exit::Quit, "n quits without sending");
-    assert_eq!(app.send_state, SendState::Ready, "nothing was sent");
-}
-
 fn candidates() -> Vec<plannotator_tui_hosts::Message> {
     use plannotator_tui_hosts::{Message, Role};
     let message = |id: &str, text: &str, at: &str| Message {
@@ -516,6 +501,79 @@ fn cycling_one_document_is_a_no_op() {
     assert_eq!(app.open.doc.source, before);
 }
 
+/// `q` drops the document from the presented set, which is what takes it out of `A`'s review.
+///
+/// Asserted on the review text rather than on the set's length, because dropping a tab from the
+/// row while `A` still hands the document over would look like a working feature and tell the
+/// agent the opposite of what the reviewer meant.
+#[test]
+fn closing_a_tab_drops_that_document_from_the_review_a_hands_over() {
+    let root = folder("close-drops", 3);
+    let mut app =
+        App::open_folder(&root, 80, Box::new(Discard), RenderSettings::text_only()).expect("folder opens");
+    app.data_dir = scratch_data_dir();
+    app.open_doc(&root.join("f00.md")).expect("reopen under the scratch data dir");
+    app.sync_doc_counts();
+
+    app.handle_event(&key(KeyCode::Char('q'), KeyModifiers::NONE)).expect("q");
+
+    assert_eq!(app.exit, super::Exit::Stay, "two documents are still worth reviewing");
+    assert_eq!(open_path(&app), "f01.md", "the tab that took its place opened");
+    let review = app.review_feedback().expect("the review A hands over");
+    assert!(review.starts_with("# Review of 2 documents"), "{review}");
+    assert!(review.contains("f01.md") && review.contains("f02.md"), "the rest is still reviewed: {review}");
+    assert!(!review.contains("f00.md"), "the closed document is not part of the review: {review}");
+    std::fs::remove_dir_all(&root).expect("cleanup");
+}
+
+/// Closing an annotated tab leaves real feedback unsent, so the status line says whose and how
+/// much. Nothing is lost: annotations are written when they are made, and come back with the file.
+#[test]
+fn closing_an_annotated_tab_reports_the_annotations_it_left_unsent() {
+    let (root, mut app) = set_app("close-annotated");
+    app.add_block_annotation(0, Kind::Comment, "about one".to_owned()).expect("annotate one");
+
+    app.handle_event(&key(KeyCode::Char('q'), KeyModifiers::NONE)).expect("q");
+
+    let rows = draw_sized(&mut app, 160, 12);
+    let footer = row(&rows, rows.len() - 1);
+    assert!(footer.contains("closed one/doc.md"), "the closed file is named: {footer:?}");
+    assert!(footer.contains("1 annotation(s) left unsent"), "the cost is stated: {footer:?}");
+    // The store is the copy that survives: presenting the file again brings the note back.
+    let closed = root.join("one/doc.md");
+    let store = crate::store::Store::load(
+        &crate::store::Location::for_file(&app.data_dir, &app.project, &closed),
+        &crate::doc::Document::parse("# One\n\nalpha\n".to_owned()),
+    )
+    .expect("load the closed document's record");
+    assert_eq!(store.len(), 1, "the annotation was dropped from disk, not just from the set");
+}
+
+/// The last tab has nothing left to review, so `q` there is `A`'s ending without the send.
+#[test]
+fn q_on_the_last_document_quits_and_closes_the_pane() {
+    let (_root, mut set) = set_app("close-last");
+    set.handle_event(&key(KeyCode::Char('q'), KeyModifiers::NONE)).expect("q");
+    assert_eq!(set.exit, super::Exit::Stay, "one document is left");
+    set.handle_event(&key(KeyCode::Char('q'), KeyModifiers::NONE)).expect("q again");
+    assert_eq!(set.exit, super::Exit::QuitAndClosePane, "the set is empty: nothing is left to read");
+
+    // A document presented on its own is the same situation with one fewer step: no other tab was
+    // presented with it, so closing it leaves nothing either.
+    let mut lone = app(Box::new(Discard));
+    lone.handle_event(&key(KeyCode::Char('q'), KeyModifiers::NONE)).expect("q");
+    assert_eq!(lone.exit, super::Exit::QuitAndClosePane);
+}
+
+/// ctrl+c is the escape hatch that leaves the pane behind, so Herdr finds it by label next time
+/// and reuses it. It is the one exit that is not a verdict on the review.
+#[test]
+fn ctrl_c_leaves_the_reviewer_but_not_its_pane() {
+    let (_root, mut app) = set_app("ctrl-c");
+    app.handle_event(&key(KeyCode::Char('c'), KeyModifiers::CONTROL)).expect("ctrl+c");
+    assert_eq!(app.exit, super::Exit::Quit, "the pane outlives the reviewer");
+}
+
 #[test]
 fn a_closes_the_pane_only_when_the_review_actually_went_somewhere() {
     let mut app = app(Box::new(Discard));
@@ -777,7 +835,7 @@ fn even_a_wide_footer_advertises_only_the_overlay() {
     let rows = draw_sized(&mut app, 200, 12);
     let footer = rows.last().expect("a footer row").clone();
     assert!(footer.contains("? keys"), "the overlay must stay discoverable: {footer:?}");
-    for item in ["E send", "A close", "q quit", "v select"] {
+    for item in ["E send", "A close", "q close tab", "v select"] {
         assert!(!footer.contains(item), "{item} is behind ? now, not in the footer: {footer:?}");
     }
 }

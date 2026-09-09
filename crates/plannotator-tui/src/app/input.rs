@@ -39,8 +39,13 @@ impl App {
     fn browse_key(&mut self, key: KeyEvent) -> Result<()> {
         // Global keys first.
         match (key.code, key.modifiers) {
-            (KeyCode::Char('q'), _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                self.request_quit();
+            // `q` closes the open tab rather than the app: a set is reviewed by clearing it down
+            // to what is worth handing over, and the last tab leaves nothing to review.
+            (KeyCode::Char('q'), _) => return self.close_document(),
+            // ctrl+c is the escape hatch, and the one exit that leaves the pane alone: Herdr finds
+            // it by label next time and reuses it.
+            (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                self.exit = Exit::Quit;
                 return Ok(());
             }
             // Tab walks the documents presented together. There is nothing else to walk: the

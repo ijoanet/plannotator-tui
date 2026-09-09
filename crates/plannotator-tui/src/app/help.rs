@@ -71,7 +71,13 @@ pub(super) const KEYS: [Binding; 25] = [
     },
     Binding { label: "r", what: "reload from disk", scope: Scope::Always, codes: &["r"], hint: None },
     Binding { label: "p", what: "pick another reply", scope: Scope::Always, codes: &["p"], hint: None },
-    Binding { label: "q", what: "quit", scope: Scope::Always, codes: &["q"], hint: Some("quit") },
+    Binding {
+        label: "q",
+        what: "close this tab, dropping it from the review",
+        scope: Scope::Always,
+        codes: &["q"],
+        hint: Some("close tab"),
+    },
     Binding { label: "Q", what: "quit now, send nothing", scope: Scope::Always, codes: &["Q"], hint: None },
     Binding {
         label: "j/k",

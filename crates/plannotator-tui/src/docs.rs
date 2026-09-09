@@ -103,6 +103,21 @@ impl DocSet {
         self.docs.get(index).map(|d| (index, d.path.clone()))
     }
 
+    /// Drop the document at `index` and say which one to open in its place.
+    ///
+    /// The tab that slid into the closed one's slot is the answer, so closing the last tab in the
+    /// row opens what is now the last. `None` means the set is empty: nothing is left to review.
+    ///
+    /// An index past the end drops nothing and answers with the open document, because an empty
+    /// set ends the session and a stale index must not be able to ask for that.
+    pub(crate) fn remove(&mut self, index: usize) -> Option<PathBuf> {
+        if index < self.docs.len() {
+            self.docs.remove(index);
+            self.current = index.min(self.docs.len().saturating_sub(1));
+        }
+        self.current_path().map(Path::to_path_buf)
+    }
+
     /// Annotations across the whole set, which is what a send covers.
     pub(crate) fn total_annotations(&self) -> usize {
         self.docs.iter().map(|d| d.annotations).sum()
@@ -413,6 +428,19 @@ mod tests {
         assert_eq!(set.next().map(|(i, _)| i), Some(0), "the last tab wraps to the first");
         let single = DocSet::of_files(&root, &[root.join("a.md")]);
         assert_eq!(single.next(), None);
+    }
+
+    #[test]
+    fn removing_a_document_opens_the_one_that_took_its_place() {
+        let root = PathBuf::from("/set");
+        let mut set = DocSet::of_files(&root, &[root.join("a.md"), root.join("b.md"), root.join("c.md")]);
+        assert_eq!(set.remove(0), Some(root.join("b.md")), "the tab behind it slides forward");
+        assert_eq!(set.current(), 0);
+        // The last tab has nothing behind it, so what is now the last opens instead.
+        set.focus(&root.join("c.md"));
+        assert_eq!(set.remove(1), Some(root.join("b.md")));
+        assert_eq!(set.remove(0), None, "the set is empty: nothing is left to open");
+        assert_eq!(set.len(), 0);
     }
 
     #[test]

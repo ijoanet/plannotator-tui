@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use plannotator_tui_schema::Provenance;
 
-use super::{App, Focus, Open, read_file};
+use super::{App, Exit, Focus, Open, read_file};
 use crate::delivery::Delivery;
 use crate::docs::DocSet;
 use crate::render::RenderSettings;
@@ -66,6 +66,37 @@ impl App {
         let name =
             path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
         self.status = Some(format!("{name} ({}/{total})", index + 1));
+        Ok(())
+    }
+
+    /// `q`: drop the open document from the presented set and open whatever took its place.
+    ///
+    /// Closing a tab excludes that document from `A`'s review, which is the point: clean the set
+    /// down to what is worth handing over, then approve the rest. Annotations already made on it
+    /// are therefore left unsent, so the status line names the file and how many - they are on
+    /// disk, and come back the next time it is presented.
+    ///
+    /// The last document has nothing left to review, so this ends the session the way `A` does,
+    /// pane included. A document presented on its own is that same case with one fewer step.
+    pub(crate) fn close_document(&mut self) -> Result<()> {
+        let index = self.docs.as_ref().map_or(0, DocSet::current);
+        let closed = self.docs.as_ref().and_then(|set| set.docs().get(index).cloned());
+        let next = self.docs.as_mut().and_then(|set| set.remove(index));
+        // Either half missing means the session is over: a document presented on its own had no
+        // tab to close, and a set with nothing behind the closed tab has nothing left to review.
+        let (Some(closed), Some(next)) = (closed, next) else {
+            self.exit = Exit::QuitAndClosePane;
+            return Ok(());
+        };
+        self.open_doc(&next)?;
+        let left = self.docs.as_ref().map_or(0, DocSet::len);
+        self.status = Some(match closed.annotations {
+            0 => format!("closed {} \u{b7} {left} left", closed.name),
+            unsent => format!(
+                "closed {} \u{b7} {unsent} annotation(s) left unsent, still on disk \u{b7} {left} left",
+                closed.name
+            ),
+        });
         Ok(())
     }
 
