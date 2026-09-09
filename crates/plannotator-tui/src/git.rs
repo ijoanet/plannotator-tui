@@ -80,10 +80,11 @@ impl ChangeBar {
         Self { line_starts, signs }
     }
 
-    /// A file `HEAD` has never heard of: every line bars, in untracked's own colour.
-    fn untracked(source: &str) -> Self {
+    /// Every line the same kind: a file git has never heard of, or one with no `HEAD` to
+    /// compare against, where the whole file is the change.
+    fn every_line(source: &str, kind: ChangeKind) -> Self {
         let line_starts = line_starts(source);
-        let signs = vec![Some(ChangeKind::Untracked); line_starts.len()];
+        let signs = vec![Some(kind); line_starts.len()];
         Self { line_starts, signs }
     }
 }
@@ -147,12 +148,16 @@ pub(crate) fn change_bar(path: Option<&Path>, source: &str, signs: bool) -> Chan
     if git(dir, &["rev-parse", "--show-toplevel"], None).is_none_or(|top| top.trim().is_empty()) {
         return ChangeBar::default();
     }
-    // Not in `HEAD` at all - a file git has never been told about, or a repository whose first
-    // commit has not happened - is untracked, never added.
-    let in_head = git(dir, &["ls-tree", "--name-only", "HEAD"], Some(path))
-        .is_some_and(|entry| !entry.trim().is_empty());
-    if !in_head {
-        return ChangeBar::untracked(source);
+    // Untracked means git has never been told about the file, which is not the same as being
+    // absent from `HEAD`: a newly `git add`ed file is tracked, and gitsigns calls its lines added.
+    // Asking `ls-tree HEAD` instead reported every staged new file as untracked.
+    if git(dir, &["ls-files", "--error-unmatch"], Some(path)).is_none() {
+        return ChangeBar::every_line(source, ChangeKind::Untracked);
+    }
+    // Tracked, but there is no `HEAD` to diff against yet (a repository before its first commit),
+    // so every line is new rather than unknown.
+    if git(dir, &["rev-parse", "--verify", "HEAD"], None).is_none() {
+        return ChangeBar::every_line(source, ChangeKind::Added);
     }
     let diff = git(dir, &["diff", "-U0", "--no-color", "HEAD"], Some(path)).unwrap_or_default();
     ChangeBar::build(source, &parse_hunks(&diff))
@@ -258,11 +263,62 @@ mod tests {
 
     #[test]
     fn an_untracked_file_is_signed_on_every_line_and_never_as_added() {
-        let bar = ChangeBar::untracked("one\ntwo\nthree\n");
+        let bar = ChangeBar::every_line("one\ntwo\nthree\n", ChangeKind::Untracked);
         for line in 1..=3 {
             assert_eq!(sign_on_line(&bar, line), Some(ChangeKind::Untracked), "line {line}");
         }
         assert_eq!(bar.signs.len(), 3, "a trailing newline does not add a fourth line");
+    }
+
+    /// A scratch repository, and the path to a file inside it.
+    fn scratch_repo(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("plannotator-tui-repo-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        for args in
+            [vec!["init", "--quiet"], vec!["config", "user.email", "t@t"], vec!["config", "user.name", "t"]]
+        {
+            Command::new("git").arg("-C").arg(&dir).args(args).output().expect("git runs in tests");
+        }
+        dir
+    }
+
+    fn git_in(dir: &Path, args: &[&str]) {
+        Command::new("git").arg("-C").arg(dir).args(args).output().expect("git");
+    }
+
+    #[test]
+    fn a_staged_new_file_is_added_not_untracked() {
+        // Untracked means git has never heard of the file. A `git add`ed file is tracked, and its
+        // lines are added - which is what gitsigns shows. Keying on `HEAD` membership instead
+        // reported every staged new file as untracked.
+        let dir = scratch_repo("staged");
+        std::fs::write(dir.join("seed.md"), "seed\n").expect("write");
+        git_in(&dir, &["add", "seed.md"]);
+        git_in(&dir, &["commit", "--quiet", "-m", "seed"]);
+
+        let file = dir.join("new notes.md");
+        std::fs::write(&file, "one\ntwo\n").expect("write");
+        let before = change_bar(Some(&file), "one\ntwo\n", true);
+        assert_eq!(before.kind_at(0), Some(ChangeKind::Untracked), "not yet added: untracked");
+
+        git_in(&dir, &["add", "new notes.md"]);
+        let after = change_bar(Some(&file), "one\ntwo\n", true);
+        assert_eq!(after.kind_at(0), Some(ChangeKind::Added), "staged: added, not untracked");
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    #[test]
+    fn a_tracked_file_in_a_repository_with_no_commit_yet_is_all_added() {
+        // Nothing to diff against, so the whole file is new rather than unknown.
+        let dir = scratch_repo("nohead");
+        let file = dir.join("first.md");
+        std::fs::write(&file, "one\ntwo\n").expect("write");
+        git_in(&dir, &["add", "first.md"]);
+        let bar = change_bar(Some(&file), "one\ntwo\n", true);
+        assert_eq!(sign_on_line(&bar, 1), Some(ChangeKind::Added));
+        assert_eq!(sign_on_line(&bar, 2), Some(ChangeKind::Added));
+        std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 
     #[test]
