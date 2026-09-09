@@ -335,7 +335,7 @@ mod tests {
     use super::*;
 
     /// Keys the handler matches that are deliberately absent from the table, with the reason.
-    const EXEMPT: [&str; 12] = [
+    const EXEMPT: [&str; 11] = [
         // The quit question owns the footer while it is up and names its own keys.
         "y",
         "Y",
@@ -350,29 +350,48 @@ mod tests {
         "Backspace",
         "Char",
         "BackTab",
-        "Tab",
         // ctrl+c, listed as `q`.
         "C",
     ];
 
-    /// Every `KeyCode::Char('x')` and `KeyCode::Named` the input handler matches.
-    fn keys_the_handler_matches() -> Vec<String> {
-        let source = include_str!("input.rs");
-        let mut found: Vec<String> = Vec::new();
-        let mut rest = source;
-        while let Some(at) = rest.find("KeyCode::") {
-            let after = rest.get(at + "KeyCode::".len()..).unwrap_or("");
-            if let Some(tail) = after.strip_prefix("Char('") {
-                if let Some(ch) = tail.chars().next() {
-                    found.push(ch.to_string());
+    /// Every module that answers a key. `input.rs` is the main handler; the compose box and the
+    /// reply picker read keys while they are up, and this module is scanned so its own prose cannot
+    /// drift either.
+    const HANDLERS: [(&str, &str); 4] = [
+        ("input.rs", include_str!("input.rs")),
+        ("compose.rs", include_str!("compose.rs")),
+        ("pick.rs", include_str!("pick.rs")),
+        ("help.rs", include_str!("help.rs")),
+    ];
+
+    /// Every `KeyCode` variant the handlers match, with the module that matched it.
+    ///
+    /// Comments are stripped first: this file names `KeyCode` variants in prose, and prose is not
+    /// a binding. String literals are harmless, because the scanner only keeps a name when one
+    /// follows the marker immediately.
+    fn keys_the_handlers_match() -> Vec<(String, &'static str)> {
+        let mut found: Vec<(String, &'static str)> = Vec::new();
+        for (module, source) in HANDLERS {
+            let code = source
+                .lines()
+                .map(|line| line.split("//").next().unwrap_or(""))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let mut rest = code.as_str();
+            while let Some(at) = rest.find("KeyCode::") {
+                let after = rest.get(at + "KeyCode::".len()..).unwrap_or("");
+                if let Some(tail) = after.strip_prefix("Char('") {
+                    if let Some(ch) = tail.chars().next() {
+                        found.push((ch.to_string(), module));
+                    }
+                } else {
+                    let name: String = after.chars().take_while(char::is_ascii_alphanumeric).collect();
+                    if !name.is_empty() {
+                        found.push((name, module));
+                    }
                 }
-            } else {
-                let name: String = after.chars().take_while(char::is_ascii_alphanumeric).collect();
-                if !name.is_empty() {
-                    found.push(name);
-                }
+                rest = after;
             }
-            rest = after;
         }
         found.sort_unstable();
         found.dedup();
@@ -382,13 +401,13 @@ mod tests {
     #[test]
     fn every_key_the_handler_answers_to_is_described_in_the_table() {
         let described: Vec<&str> = KEYS.iter().flat_map(|b| b.codes.iter().copied()).collect();
-        let undocumented: Vec<String> = keys_the_handler_matches()
+        let undocumented: Vec<(String, &str)> = keys_the_handlers_match()
             .into_iter()
-            .filter(|key| !described.contains(&key.as_str()) && !EXEMPT.contains(&key.as_str()))
+            .filter(|(key, _)| !described.contains(&key.as_str()) && !EXEMPT.contains(&key.as_str()))
             .collect();
         assert!(
             undocumented.is_empty(),
-            "input.rs binds keys the help does not mention: {undocumented:?}. \
+            "these bind keys the help does not mention: {undocumented:?}. \
              Add them to KEYS, or to EXEMPT with the reason."
         );
     }
