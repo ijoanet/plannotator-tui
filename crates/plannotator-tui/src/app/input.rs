@@ -55,6 +55,12 @@ impl App {
                 return Ok(());
             }
             (KeyCode::Char('A'), _) => return self.send_and_close(),
+            // `Q` is the way out when the review is not wanted: nothing is sent, archived or
+            // cleared, and the pane goes with the app because there is nothing left to read.
+            (KeyCode::Char('Q'), _) => {
+                self.exit = Exit::QuitAndClosePane;
+                return Ok(());
+            }
             (KeyCode::Char('?'), _) => {
                 self.mode = Mode::Help;
                 return Ok(());

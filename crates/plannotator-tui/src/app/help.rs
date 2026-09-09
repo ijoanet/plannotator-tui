@@ -57,7 +57,7 @@ pub(super) struct Binding {
 }
 
 /// Every binding, in the order the overlay lists them.
-pub(super) const KEYS: [Binding; 24] = [
+pub(super) const KEYS: [Binding; 25] = [
     Binding { label: "?", what: "this list", scope: Scope::Always, codes: &["?"], hint: Some("keys") },
     Binding { label: "Tab", what: "next document", scope: Scope::Always, codes: &["Tab"], hint: None },
     Binding { label: "n", what: "notes", scope: Scope::Always, codes: &["n"], hint: None },
@@ -72,6 +72,7 @@ pub(super) const KEYS: [Binding; 24] = [
     Binding { label: "r", what: "reload from disk", scope: Scope::Always, codes: &["r"], hint: None },
     Binding { label: "p", what: "pick another reply", scope: Scope::Always, codes: &["p"], hint: None },
     Binding { label: "q", what: "quit", scope: Scope::Always, codes: &["q"], hint: Some("quit") },
+    Binding { label: "Q", what: "quit now, send nothing", scope: Scope::Always, codes: &["Q"], hint: None },
     Binding {
         label: "j/k",
         what: "block by block",

@@ -96,6 +96,26 @@ fn agent() -> Box<dyn Delivery> {
     ))
 }
 
+/// A delivery target that keeps what reached it, so a test can assert that nothing did.
+///
+/// `Discard` cannot tell "nothing was sent" from "a send was thrown away", which is the whole
+/// question for a key that must deliver nothing.
+#[derive(Debug, Default, Clone)]
+struct Recording(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+
+impl Delivery for Recording {
+    fn describe(&self) -> String {
+        "recording".to_owned()
+    }
+
+    fn deliver(&self, feedback: &str) -> Result<(), crate::delivery::DeliveryError> {
+        if let Ok(mut sent) = self.0.lock() {
+            sent.push(feedback.to_owned());
+        }
+        Ok(())
+    }
+}
+
 /// One frame, as one string per screen row.
 fn draw(app: &mut App) -> Vec<String> {
     let mut terminal = Terminal::new(TestBackend::new(80, 20)).expect("terminal");
@@ -503,6 +523,25 @@ fn a_closes_the_pane_only_when_the_review_actually_went_somewhere() {
     app.handle_event(&key(KeyCode::Char('A'), KeyModifiers::NONE)).expect("A");
     assert_eq!(app.send_state, SendState::Sent);
     assert_eq!(app.exit, super::Exit::QuitAndClosePane, "A dismisses the reviewer and its pane");
+}
+
+/// `Q` is the way out when the review is not wanted: it must reach the agent with nothing.
+///
+/// Asserted on the delivery seam and the archive rather than on `exit` alone, because a `Q` that
+/// quits *and* hands the review over would pass any test that only watched the app leave.
+#[test]
+fn capital_q_quits_and_closes_the_pane_delivering_nothing() {
+    let sent = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut app = app(Box::new(Recording(std::sync::Arc::clone(&sent))));
+    app.add_block_annotation(0, Kind::Comment, "never mind".to_owned()).expect("annotation");
+
+    app.handle_event(&key(KeyCode::Char('Q'), KeyModifiers::NONE)).expect("Q");
+
+    assert_eq!(app.exit, super::Exit::QuitAndClosePane, "Q takes the pane with it, as A does");
+    assert!(sent.lock().expect("the recorded sends").is_empty(), "Q delivered something");
+    let index = app.data_dir.join("feedback").join(&app.project).join("index.jsonl");
+    assert!(!index.exists(), "Q archived a submission");
+    assert_eq!(app.send_count(), 1, "and the annotation is still pending, not cleared");
 }
 
 #[test]
