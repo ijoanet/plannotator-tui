@@ -66,8 +66,12 @@ footer hint read, so it cannot drift from the bindings.
 | notes | `j`/`k` note by note · `e` edit · `x` remove · `esc` back to the document |
 
 There is no file tree. Documents arrive as a set, one tab per document above the header, and `Tab`
-walks them. Tabs are named by file, growing to a parent directory only when two would collide; the
-footer spells out the whole path. The gutter bars what changed since `HEAD` (see below).
+walks them, as does clicking a tab. Tabs are named by file, growing to a parent directory only when
+two would collide; the footer spells out the whole path. The gutter bars what changed since `HEAD`
+(see below).
+
+The footer carries only `?`. Every other key lives behind that overlay, because the row is worth
+more to the document's path than to a list of keys you read once.
 
 ## Diagrams and images
 

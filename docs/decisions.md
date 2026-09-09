@@ -641,3 +641,26 @@ The overlay must **admit what it cannot show**. Its first version silently clipp
 short pane, which is precisely the drift the module exists to prevent, only worse: a help screen that
 looks complete and is not. Scrolling is not required for a keymap; honest disclosure is, so shown
 plus admitted always equals the total.
+
+## 26. The tab row is clickable, and the footer advertises only `?` (2026-09-09)
+
+Two changes pulling the same way: the tab row becomes usable with the mouse, and the footer stops
+restating what the overlay already says in full.
+
+`draw_tabs` records each visible tab's column span **as it lays it out**, because after truncation
+and the hidden-count markers nothing else knows where a label ended up. A hidden tab has no span,
+which is correct rather than a gap: there is nothing on screen to click, and `Tab` reaches it.
+Clicking the tab already open returns focus to the document instead of re-reading the file, since
+that is what clicking a tab means when you are in the notes rail.
+
+The footer listed every hinted key for the current scope, which spent a third of a narrow row on a
+list that `?` gives in full, and those columns are worth more to the document's path. It now carries
+`?` alone. The shedding logic stays, because one item still has to fit or be dropped whole.
+
+Three tests failed on that change and were **rewritten rather than joined by new ones**: the hint no
+longer varies with focus, so the test that asserted it did now asserts it does not, and the
+wide-footer test asserts the other keys are absent. Keeping a passing test beside a contradicting
+one is how a suite starts describing two different programs.
+
+The click test takes the span from `geometry` rather than guessing a column, so it cannot pass
+against an empty tab row. Verified by mutation: recording no spans fails it.
