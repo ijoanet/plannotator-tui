@@ -652,7 +652,7 @@ fn the_keymap_overlay_opens_on_question_mark_and_closes_on_any_of_its_exits() {
         assert_eq!(app.mode, Mode::Help);
         let rows = draw(&mut app);
         let shown = rows.join("\n");
-        assert!(shown.contains("send everything, approve the rest, close"), "A is described: {shown}");
+        assert!(shown.contains("send all, approve, close"), "A is described: {shown}");
         assert!(shown.contains("next document"), "Tab is described: {shown}");
 
         app.handle_event(&key(closing, KeyModifiers::NONE)).expect("close");
@@ -660,4 +660,21 @@ fn the_keymap_overlay_opens_on_question_mark_and_closes_on_any_of_its_exits() {
         // `q` closes the overlay rather than the app: quitting from a help screen would surprise.
         assert_eq!(app.exit, super::Exit::Stay, "{closing:?} left the app running");
     }
+}
+
+#[test]
+fn a_pane_with_room_shows_every_group_and_a_cramped_one_says_what_it_hid() {
+    let mut app = app(Box::new(Discard));
+    app.handle_event(&key(KeyCode::Char('?'), KeyModifiers::NONE)).expect("open");
+
+    // The reviewer's real pane is wide and tall: everything fits, so nothing is withheld.
+    let roomy = draw_sized(&mut app, 120, 40).join("\n");
+    for group in ["anywhere", "document", "selection", "notes"] {
+        assert!(roomy.contains(group), "{group} is missing from a pane with room: {roomy}");
+    }
+    assert!(!roomy.contains("widen the pane"), "nothing was hidden, so nothing is claimed: {roomy}");
+
+    // A pane too small for the table counts what it could not draw instead of dropping it silently.
+    let cramped = draw_sized(&mut app, 80, 20).join("\n");
+    assert!(cramped.contains("widen the pane"), "the shortfall is reported: {cramped}");
 }

@@ -60,16 +60,10 @@ pub(super) const KEYS: [Binding; 24] = [
     Binding { label: "?", what: "this list", scope: Scope::Always, codes: &["?"], hint: Some("keys") },
     Binding { label: "Tab", what: "next document", scope: Scope::Always, codes: &["Tab"], hint: None },
     Binding { label: "n", what: "notes", scope: Scope::Always, codes: &["n"], hint: None },
-    Binding {
-        label: "E",
-        what: "send the annotations",
-        scope: Scope::Always,
-        codes: &["E"],
-        hint: Some("send"),
-    },
+    Binding { label: "E", what: "send annotations", scope: Scope::Always, codes: &["E"], hint: Some("send") },
     Binding {
         label: "A",
-        what: "send everything, approve the rest, close",
+        what: "send all, approve, close",
         scope: Scope::Always,
         codes: &["A"],
         hint: Some("close"),
@@ -108,18 +102,12 @@ pub(super) const KEYS: [Binding; 24] = [
     Binding { label: "v", what: "select text", scope: Scope::Document, codes: &["v"], hint: Some("select") },
     Binding {
         label: "c",
-        what: "comment on the block",
+        what: "comment on block",
         scope: Scope::Document,
         codes: &["c", "Enter"],
         hint: None,
     },
-    Binding {
-        label: "x",
-        what: "clear the block's notes",
-        scope: Scope::Document,
-        codes: &["x"],
-        hint: None,
-    },
+    Binding { label: "x", what: "clear block notes", scope: Scope::Document, codes: &["x"], hint: None },
     Binding { label: "drag", what: "select text", scope: Scope::Document, codes: &[], hint: None },
     Binding {
         label: "a",
@@ -158,13 +146,7 @@ pub(super) const KEYS: [Binding; 24] = [
         codes: &["x", "Delete"],
         hint: Some("remove"),
     },
-    Binding {
-        label: "esc",
-        what: "back to the document",
-        scope: Scope::Rail,
-        codes: &["Esc"],
-        hint: Some(""),
-    },
+    Binding { label: "esc", what: "back to document", scope: Scope::Rail, codes: &["Esc"], hint: Some("") },
 ];
 
 /// The footer's right-hand hint for what is focused now.
@@ -199,41 +181,108 @@ pub(super) fn hint(focus: Focus, pending: bool) -> String {
 
 impl App {
     /// The `?` overlay: every binding, grouped by where it is live.
+    ///
+    /// Laid out in as many columns as the pane's height requires. A short pane would otherwise
+    /// clip the last groups away with nothing on screen to say they existed, which is the same
+    /// failure as the stale footer this table replaced.
     pub(super) fn draw_help(&self, frame: &mut Frame) {
         let theme = self.render.theme;
-        let mut lines: Vec<Line<'static>> = Vec::new();
-        for scope in [Scope::Always, Scope::Document, Scope::Selection, Scope::Rail] {
-            lines.push(Line::from(Span::styled(
-                scope.title().to_owned(),
-                Style::new().fg(theme.accent).add_modifier(Modifier::BOLD),
-            )));
-            for binding in KEYS.iter().filter(|b| b.scope == scope) {
-                lines.push(Line::from(vec![
-                    Span::styled(format!("  {:<10}", binding.label), Style::new().fg(theme.code)),
-                    Span::styled(binding.what.to_owned(), Style::new().fg(theme.text)),
-                ]));
-            }
-            lines.push(Line::default());
-        }
-        let width = lines.iter().map(Line::width).max().unwrap_or(20) as u16 + 4;
-        let height = lines.len() as u16 + 2;
         let area = frame.area();
+        let groups: Vec<Vec<Line<'static>>> = [Scope::Always, Scope::Document, Scope::Selection, Scope::Rail]
+            .into_iter()
+            .map(|scope| self.help_group(scope))
+            .collect();
+
+        // Two rows go to the border; a group is never split across columns.
+        let room = usize::from(area.height.saturating_sub(2)).max(1);
+        let columns = split_columns(&groups, room);
+        // Only the columns that fit are drawn. A pane too small for the whole table says how
+        // many bindings it is not showing, rather than dropping them where nobody can tell.
+        let mut widths: Vec<usize> = Vec::new();
+        let mut kept = 0usize;
+        let mut spent = 2usize; // the border
+        for column in &columns {
+            let width = column.iter().map(Line::width).max().unwrap_or(10) + 2;
+            if spent + width > usize::from(area.width) && kept > 0 {
+                break;
+            }
+            spent += width;
+            widths.push(width);
+            kept += 1;
+        }
+        let hidden: usize = columns
+            .iter()
+            .skip(kept)
+            .flatten()
+            .filter(|line| line.width() > 0 && line.spans.len() > 1)
+            .count();
+        let columns: Vec<Vec<Line<'static>>> = columns.into_iter().take(kept.max(1)).collect();
+        let height = columns.iter().map(Vec::len).max().unwrap_or(1) as u16 + 2;
+        let width = (spent as u16).min(area.width);
+
         let rect = Rect {
             x: area.x + (area.width.saturating_sub(width)) / 2,
             y: area.y + (area.height.saturating_sub(height)) / 2,
-            width: width.min(area.width),
+            width,
             height: height.min(area.height),
         };
         frame.render_widget(Clear, rect);
+        let title = if hidden > 0 {
+            format!(" keys \u{b7} {hidden} more, widen the pane \u{b7} ? or esc closes ")
+        } else {
+            " keys \u{b7} ? or esc closes ".to_owned()
+        };
         let boxed = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(Style::new().fg(theme.accent))
-            .title(Span::styled(" keys \u{b7} ? or esc closes ", Style::new().fg(theme.muted)));
+            .title(Span::styled(title, Style::new().fg(theme.muted)));
         let inner = boxed.inner(rect);
         frame.render_widget(boxed, rect);
-        frame.render_widget(Paragraph::new(lines), inner);
+        let mut x = inner.x;
+        for (lines, column_width) in columns.into_iter().zip(widths) {
+            let column_width = (column_width as u16).min(inner.right().saturating_sub(x));
+            if column_width == 0 {
+                break;
+            }
+            let rect = Rect { x, y: inner.y, width: column_width, height: inner.height };
+            frame.render_widget(Paragraph::new(lines), rect);
+            x += column_width;
+        }
     }
+
+    /// One scope's heading and its bindings, with a blank line after it.
+    fn help_group(&self, scope: Scope) -> Vec<Line<'static>> {
+        let theme = self.render.theme;
+        let mut lines = vec![Line::from(Span::styled(
+            scope.title().to_owned(),
+            Style::new().fg(theme.accent).add_modifier(Modifier::BOLD),
+        ))];
+        lines.extend(KEYS.iter().filter(|b| b.scope == scope).map(|binding| {
+            Line::from(vec![
+                Span::styled(format!("  {:<10}", binding.label), Style::new().fg(theme.code)),
+                Span::styled(binding.what.to_owned(), Style::new().fg(theme.text)),
+            ])
+        }));
+        lines.push(Line::default());
+        lines
+    }
+}
+
+/// Pack groups into columns no taller than `room`, keeping each group whole.
+fn split_columns(groups: &[Vec<Line<'static>>], room: usize) -> Vec<Vec<Line<'static>>> {
+    let mut columns: Vec<Vec<Line<'static>>> = Vec::new();
+    for group in groups {
+        let fits = columns.last().is_some_and(|last: &Vec<Line<'static>>| last.len() + group.len() <= room);
+        if fits {
+            if let Some(last) = columns.last_mut() {
+                last.extend(group.iter().cloned());
+            }
+        } else {
+            columns.push(group.clone());
+        }
+    }
+    if columns.is_empty() { vec![Vec::new()] } else { columns }
 }
 
 #[cfg(test)]
