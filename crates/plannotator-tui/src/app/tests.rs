@@ -819,3 +819,134 @@ fn a_document_with_an_annotation_is_never_reported_as_approved() {
         "the untouched document is still approved:\n{review}"
     );
 }
+
+/// One frame, as (symbol, foreground) for every row of screen column `x`.
+fn column_of(app: &mut App, width: u16, height: u16, x: u16) -> Vec<(String, ratatui::style::Color)> {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("draw");
+    let buffer = terminal.backend().buffer();
+    (0..buffer.area.height)
+        .map(|y| {
+            buffer.cell((x, y)).map_or_else(
+                || (String::new(), ratatui::style::Color::Reset),
+                |c| (c.symbol().to_owned(), c.fg),
+            )
+        })
+        .collect()
+}
+
+/// One git command in `dir`, with an identity of its own so a developer's global config -
+/// or the lack of one - cannot decide whether this test can commit.
+fn git_in(dir: &std::path::Path, args: &[&str]) {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false"])
+        .args(args)
+        .output()
+        .expect("git runs");
+    assert!(output.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&output.stderr));
+}
+
+/// A document opened from disk, with image art on so a block that becomes a picture is really
+/// drawn as one. Mermaid stays off: it would need Node.
+fn app_on(path: &std::path::Path, git: crate::config::GitConfig) -> App {
+    let art = crate::config::ArtConfig {
+        mermaid: crate::config::MermaidConfig { enabled: false, ..crate::config::MermaidConfig::default() },
+        image: crate::config::ImageConfig::default(),
+    };
+    let render = RenderSettings { art, git, ..RenderSettings::text_only() };
+    let mut app =
+        App::open(super::read_file(path).expect("reads the document"), 80, Box::new(Discard), render)
+            .expect("opens");
+    app.data_dir = scratch_data_dir();
+    app
+}
+
+/// The change bar, end to end: real `git diff -U0 HEAD` output reaching the gutter's sign column.
+///
+/// The only test that builds a repository - every other change bar invariant is pure and lives in
+/// `git.rs`. It is asserted on the drawn buffer rather than on the parsed hunks, because a bar
+/// that is correct and drawn in the block marker's column is still a bug.
+#[test]
+fn the_change_bar_signs_the_gutters_first_column_from_what_git_reports() {
+    let theme = crate::theme::Theme::default();
+    let root = std::env::temp_dir().join(format!("plannotator-tui-repo-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    // A space in the name, because the runner passes the path to git as one argument.
+    let doc = root.join("a plan.md");
+    let committed = "# Plan\n\nalpha\n\n![logo](logo.png)\n\nbeta\n";
+    std::fs::write(&doc, committed).expect("write");
+    let mut png = image::RgbaImage::new(4, 4);
+    for pixel in png.pixels_mut() {
+        *pixel = image::Rgba([10, 20, 30, 255]);
+    }
+    png.save(root.join("logo.png")).expect("writes png");
+    git_in(&root, &["init", "-q"]);
+
+    // A repository with no commit has no HEAD to measure against. That must degrade, never error:
+    // nothing here is added, changed or deleted, because git was never able to say so.
+    let fresh = column_of(&mut app_on(&doc, crate::config::GitConfig::default()), 80, 20, 0);
+    for (row, (symbol, colour)) in fresh.iter().enumerate() {
+        assert!(
+            *colour != theme.change_added && *colour != theme.change_changed,
+            "row {row}: an empty HEAD was read as a change: {symbol:?} in {colour:?}"
+        );
+    }
+
+    git_in(&root, &["add", "a plan.md"]);
+    git_in(&root, &["commit", "-q", "-m", "first"]);
+    std::fs::write(&doc, "# Plan\n\nalpha changed\n\n![the logo](logo.png)\n\nbeta\n\ngamma\n")
+        .expect("edit");
+
+    let mut app = app_on(&doc, crate::config::GitConfig::default());
+    let signs = column_of(&mut app, 80, 20, 0);
+    let markers = column_of(&mut app, 80, 20, 1);
+    // The body starts under the header and a blank row separates each block, so the screen rows
+    // are: 1 `# Plan`, 3 `alpha changed`, 5-6 the image, 8 `beta`, 10 `gamma`.
+    let sign_at = |y: usize| signs.get(y).map(|(symbol, colour)| (symbol.as_str(), *colour));
+    assert_eq!(sign_at(3), Some(("│", theme.change_changed)), "the modified line");
+    assert_eq!(sign_at(10), Some(("│", theme.change_added)), "the new line");
+    assert_eq!(sign_at(1).map(|(symbol, _)| symbol), Some(" "), "an unchanged line gets no bar");
+    assert_eq!(sign_at(8).map(|(symbol, _)| symbol), Some(" "), "an unchanged line gets no bar");
+    // The image's rows came from no source byte at all, so they take their line from the block
+    // they stand for - which is the line that changed.
+    assert_eq!(sign_at(5), Some(("│", theme.change_changed)), "the first row of the picture");
+    assert_eq!(sign_at(6), Some(("│", theme.change_changed)), "the last row of the picture");
+    // The block marker moved to column 1, where it is closer to the text it marks.
+    assert_eq!(markers.get(1).map(|(s, c)| (s.as_str(), *c)), Some(("▍", theme.accent)));
+    assert_ne!(sign_at(1).map(|(symbol, _)| symbol), Some("▍"), "column 0 is the sign column now");
+
+    // `r` measures again rather than keeping the bars it opened with: put the file back the way
+    // HEAD has it and every bar goes.
+    std::fs::write(&doc, committed).expect("revert");
+    app.reload().expect("r reloads");
+    let reloaded = column_of(&mut app, 80, 20, 0);
+    assert!(
+        reloaded.iter().all(|(symbol, _)| symbol == " "),
+        "the document matches HEAD again, yet a bar survived the reload: {reloaded:?}"
+    );
+
+    // A file git has never been told about is untracked on every line, in its own colour, and is
+    // never reported as added.
+    let loose = root.join("untracked.md");
+    std::fs::write(&loose, "# New\n\nfresh\n").expect("write");
+    let untracked = column_of(&mut app_on(&loose, crate::config::GitConfig::default()), 80, 20, 0);
+    for row in [1usize, 3] {
+        assert_eq!(
+            untracked.get(row).map(|(s, c)| (s.as_str(), *c)),
+            Some(("│", theme.change_untracked)),
+            "row {row} of an untracked file"
+        );
+    }
+
+    // `[git] signs = false` reaches the gutter: the same file in the same repository, no bars.
+    let mut off = app_on(&doc, crate::config::GitConfig { signs: false });
+    let silent = column_of(&mut off, 80, 20, 0);
+    assert!(
+        silent.iter().all(|(symbol, _)| symbol == " "),
+        "signs are off, yet the sign column was drawn: {silent:?}"
+    );
+    std::fs::remove_dir_all(&root).expect("cleanup");
+}

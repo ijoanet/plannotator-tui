@@ -19,7 +19,23 @@ pub(crate) struct Config {
     pub(crate) image: ImageConfig,
     pub(crate) review: ReviewConfig,
     pub(crate) code: CodeConfig,
+    pub(crate) git: GitConfig,
     pub(crate) theme: crate::theme::ThemeConfig,
+}
+
+/// What git contributes to the display.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub(crate) struct GitConfig {
+    /// Bar the gutter with what changed since `HEAD`. Off costs one git call less per document
+    /// and leaves the sign column empty.
+    pub(crate) signs: bool,
+}
+
+impl Default for GitConfig {
+    fn default() -> Self {
+        Self { signs: true }
+    }
 }
 
 /// How code blocks render.

@@ -129,6 +129,21 @@ the whole pane. A table wider than the pane keeps its shape: columns shrink and 
 than the tail being clipped away. Diagrams and images do not wrap - a narrow pane clips a diagram
 and re-samples an image.
 
+## The change bar
+
+The gutter's first column bars what changed since `HEAD`, the way `gitsigns.nvim` does, so a
+review starts from what the agent actually touched. Measured with `git diff -U0 HEAD`, which
+covers staged and unstaged work together, once when a document opens and again on `r` - never
+while it is being drawn. Four colours: added, changed, and deleted on the row *after* the gap,
+since a removed line has no row of its own. A file git has never seen is untracked on every
+line, in its own colour rather than being reported as added. A document outside a repository,
+or in one with no commit yet, simply gets no bars.
+
+```toml
+[git]
+signs = false           # leave the sign column empty
+```
+
 ## Colors
 
 Every color is a named token in `[theme]`. A value is anything `ratatui` parses — `#41464e`,
@@ -142,7 +157,11 @@ link = ""          quote = ""        accent = ""         muted = ""
 border = ""        comment = ""      approve = ""        delete = ""
 comment_bg = ""    approve_bg = ""   block_bg = ""       cursor_bg = ""
 toolbar_bg = ""    send_bg = ""
+change_added = ""  change_changed = ""   change_deleted = ""   change_untracked = ""
 ```
+
+The four `change_*` tokens are the change bar's, kept apart from `comment`/`approve`/`delete`
+because those mean what the reviewer said, not what git says.
 
 `accent` is focused borders, the selected-block marker, diagram edges and diagram titles;
 `muted` is unfocused borders and diagram edge labels; `border` is diagram box-drawing.

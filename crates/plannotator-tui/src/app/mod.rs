@@ -26,6 +26,7 @@ use ratatui::layout::Rect;
 use crate::delivery::Delivery;
 use crate::doc::Document;
 use crate::docs::DocSet;
+use crate::git::ChangeBar;
 use crate::layout::DocLayout;
 use crate::render::RenderSettings;
 use crate::store::{Location, Store};
@@ -94,6 +95,8 @@ struct Open {
     doc: Document,
     layout: DocLayout,
     store: Store,
+    /// What changed since `HEAD`, measured when the document opened. Never per frame.
+    changes: ChangeBar,
 }
 
 impl Open {
@@ -110,13 +113,14 @@ impl Open {
             _ => None,
         };
         let layout = DocLayout::build(&doc, width, &render.context(file));
+        let changes = crate::git::change_bar(file, &doc.source, render.git.signs);
         let store = match (&source.provenance, source.transient) {
             (Provenance::File { path }, false) => {
                 Store::load(&Location::for_file(data_dir, project, path), &doc)?
             }
             _ => Store::transient(),
         };
-        Ok(Self { source, doc, layout, store })
+        Ok(Self { source, doc, layout, store, changes })
     }
 }
 
@@ -453,6 +457,9 @@ impl App {
         self.open.doc = Document::parse(self.open.source.content.clone());
         self.open.layout =
             DocLayout::build(&self.open.doc, self.open.layout.width, &self.render.context(Some(&path)));
+        // `r` is the other place the bar is measured: the point of reloading is that the file
+        // changed on disk, and a stale bar would point at lines that have moved.
+        self.open.changes = crate::git::change_bar(Some(&path), &self.open.doc.source, self.render.git.signs);
         self.open.store.resolve_all(&self.open.doc);
         self.clear_selection();
         self.selected = self.selected.min(self.open.doc.blocks.len().saturating_sub(1));

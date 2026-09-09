@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::config::{ArtConfig, CodeConfig, ReviewConfig};
+use crate::config::{ArtConfig, CodeConfig, GitConfig, ReviewConfig};
 use crate::theme::Theme;
 
 /// Rendering settings for the process, applied to every document opened.
@@ -16,6 +16,9 @@ pub(crate) struct RenderSettings {
     pub(crate) theme: Theme,
     pub(crate) review: ReviewConfig,
     pub(crate) code: CodeConfig,
+    /// Whether the gutter bars what changed since `HEAD`. Read when a document opens, not while
+    /// it is drawn.
+    pub(crate) git: GitConfig,
 }
 
 impl RenderSettings {
@@ -32,6 +35,7 @@ impl RenderSettings {
             theme: Theme::default(),
             review: ReviewConfig::default(),
             code: CodeConfig::default(),
+            git: GitConfig::default(),
         }
     }
 }

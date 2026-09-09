@@ -55,6 +55,13 @@ pub(crate) struct ThemeConfig {
     pub(crate) comment: String,
     pub(crate) approve: String,
     pub(crate) delete: String,
+    /// The gutter's change bar, one token per kind. Never the annotation colours above: those
+    /// mean what the reviewer said, these mean what git says.
+    pub(crate) change_added: String,
+    pub(crate) change_changed: String,
+    pub(crate) change_deleted: String,
+    /// A file `HEAD` has never seen. Its own colour, not added's.
+    pub(crate) change_untracked: String,
     pub(crate) comment_bg: String,
     pub(crate) approve_bg: String,
     /// Background of the selected block.
@@ -93,6 +100,10 @@ pub(crate) struct Theme {
     pub(crate) comment: Color,
     pub(crate) approve: Color,
     pub(crate) delete: Color,
+    pub(crate) change_added: Color,
+    pub(crate) change_changed: Color,
+    pub(crate) change_deleted: Color,
+    pub(crate) change_untracked: Color,
     pub(crate) comment_bg: Color,
     pub(crate) approve_bg: Color,
     pub(crate) block_bg: Color,
@@ -132,6 +143,13 @@ impl Default for Theme {
             comment: Color::Yellow,
             approve: Color::Green,
             delete: Color::Red,
+            // The change bar follows the colours every diff uses: new is green, touched is
+            // yellow, gone is red. Untracked keeps the grey `muted` happens to have, as its own
+            // token, because a file git has never seen is not a file with new lines in it.
+            change_added: Color::Green,
+            change_changed: Color::Yellow,
+            change_deleted: Color::Red,
+            change_untracked: Color::DarkGray,
             comment_bg: Color::Indexed(58),
             approve_bg: Color::Indexed(22),
             block_bg: Color::Indexed(236),
@@ -174,6 +192,10 @@ impl Theme {
             comment: color(&config.comment, "comment", d.comment)?,
             approve: color(&config.approve, "approve", d.approve)?,
             delete: color(&config.delete, "delete", d.delete)?,
+            change_added: color(&config.change_added, "change_added", d.change_added)?,
+            change_changed: color(&config.change_changed, "change_changed", d.change_changed)?,
+            change_deleted: color(&config.change_deleted, "change_deleted", d.change_deleted)?,
+            change_untracked: color(&config.change_untracked, "change_untracked", d.change_untracked)?,
             comment_bg: color(&config.comment_bg, "comment_bg", d.comment_bg)?,
             approve_bg: color(&config.approve_bg, "approve_bg", d.approve_bg)?,
             block_bg: color(&config.block_bg, "block_bg", d.block_bg)?,
@@ -189,6 +211,16 @@ impl Theme {
             plannotator_tui_schema::Kind::Comment => self.comment,
             plannotator_tui_schema::Kind::LooksGood => self.approve,
             plannotator_tui_schema::Kind::Delete => self.delete,
+        }
+    }
+
+    /// The colour of a change bar sign.
+    pub(crate) fn change(self, kind: crate::git::ChangeKind) -> Color {
+        match kind {
+            crate::git::ChangeKind::Added => self.change_added,
+            crate::git::ChangeKind::Changed => self.change_changed,
+            crate::git::ChangeKind::Deleted => self.change_deleted,
+            crate::git::ChangeKind::Untracked => self.change_untracked,
         }
     }
 }
@@ -277,5 +309,32 @@ mod tests {
         assert_eq!(theme.kind(plannotator_tui_schema::Kind::Comment), Color::Yellow);
         assert_eq!(theme.kind(plannotator_tui_schema::Kind::LooksGood), Color::Green);
         assert_eq!(theme.kind(plannotator_tui_schema::Kind::Delete), Color::Red);
+    }
+
+    /// The change bar has four tokens of its own, not aliases of the annotation kinds: retuning
+    /// what git says must not repaint what the reviewer said.
+    #[test]
+    fn each_change_kind_has_its_own_token_apart_from_the_annotation_kinds() {
+        use crate::git::ChangeKind;
+
+        let config = ThemeConfig {
+            change_added: "blue".to_owned(),
+            change_changed: "magenta".to_owned(),
+            change_deleted: "cyan".to_owned(),
+            change_untracked: "white".to_owned(),
+            ..ThemeConfig::default()
+        };
+        let theme = Theme::resolve(&config).expect("resolves");
+        assert_eq!(theme.change(ChangeKind::Added), Color::Blue);
+        assert_eq!(theme.change(ChangeKind::Changed), Color::Magenta);
+        assert_eq!(theme.change(ChangeKind::Deleted), Color::Cyan);
+        assert_eq!(theme.change(ChangeKind::Untracked), Color::White);
+        // The annotation kinds kept theirs.
+        assert_eq!(theme.kind(plannotator_tui_schema::Kind::LooksGood), Color::Green);
+        assert_eq!(theme.kind(plannotator_tui_schema::Kind::Comment), Color::Yellow);
+        assert_eq!(theme.kind(plannotator_tui_schema::Kind::Delete), Color::Red);
+        // Untracked defaults to the same grey as `muted` without being it.
+        let d = Theme::default();
+        assert_eq!(d.change(ChangeKind::Untracked), d.muted);
     }
 }

@@ -184,12 +184,27 @@ impl App {
                 buf.set_style(Rect { x, y: screen_y, width: 1, height: 1 }, Style::new().bg(theme.cursor_bg));
             }
 
+            // Column 0 is the sign column, gitsigns-style; the block marker moves to column 1,
+            // closer to the text it marks. A row's first mapped source byte gives its line, and
+            // art rows carry no offsets at all, so those fall back to where their block starts.
+            let byte = row
+                .cells
+                .iter()
+                .flatten()
+                .next()
+                .copied()
+                .or_else(|| self.open.doc.blocks.get(block).map(|b| b.range.start));
+            if let Some(kind) = byte.and_then(|byte| self.open.changes.kind_at(byte)) {
+                let bar = Span::styled("│", Style::new().fg(theme.change(kind)));
+                buf.set_span(gutter.x, screen_y, &bar, 1);
+            }
+
             let marker = match (block == self.selected, row_has_annotation) {
                 (true, _) => Span::styled("▍", Style::new().fg(theme.accent)),
                 (false, true) => Span::styled("▍", Style::new().fg(theme.comment)),
                 (false, false) => Span::raw(" "),
             };
-            buf.set_span(gutter.x, screen_y, &marker, 1);
+            buf.set_span(gutter.x + 1, screen_y, &marker, 1);
         }
     }
 

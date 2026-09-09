@@ -86,6 +86,7 @@ pub(crate) fn render_settings() -> Result<RenderSettings> {
         theme: config.theme()?,
         review: config.review.clone(),
         code: config.code.clone(),
+        git: config.git.clone(),
     })
 }
 

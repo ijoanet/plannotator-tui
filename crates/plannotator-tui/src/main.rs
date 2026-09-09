@@ -11,6 +11,7 @@ mod delivery;
 mod doc;
 mod docs;
 mod export;
+mod git;
 mod herdr;
 mod last;
 mod layout;
