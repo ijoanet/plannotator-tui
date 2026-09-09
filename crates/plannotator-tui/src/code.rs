@@ -17,17 +17,20 @@
 //! from `pulldown-cmark`'s event stream, and every rendered character keeps the byte it came from
 //! so a wrapped command stays selectable.
 
+mod highlight;
+
 use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Text};
 
+use crate::code::highlight::Token;
 use crate::doc::parse_options;
 use crate::srcmap::LineOffsets;
 use crate::theme::Theme;
 use crate::wrap::{Painted, display_width, paint};
 
-/// A character with the source byte it came from.
-type Char = (char, Option<usize>);
+/// A character, the source byte it came from, and what it means.
+type Char = (char, Option<usize>, Token);
 
 /// Drawn down the left of every code row, so the block's extent is visible without a fence.
 const RULE: char = '│';
@@ -53,7 +56,7 @@ pub(crate) struct CodeBlock {
 pub(crate) fn parse(source: &str, base: usize) -> Option<CodeBlock> {
     let mut language = None;
     let mut inside = false;
-    let mut chars: Vec<Char> = Vec::new();
+    let mut chars: Vec<(char, Option<usize>)> = Vec::new();
 
     for (event, range) in Parser::new_ext(source, parse_options()).into_offset_iter() {
         match event {
@@ -78,16 +81,42 @@ pub(crate) fn parse(source: &str, base: usize) -> Option<CodeBlock> {
             _ => {}
         }
     }
-    inside.then(|| CodeBlock { language, lines: split_lines(&chars) })
+    if !inside {
+        return None;
+    }
+    let lines = split_lines(&chars);
+    Some(CodeBlock { lines: highlighted(language.as_deref(), lines), language })
+}
+
+/// Attach a token to every character, from syntect where the language is known.
+///
+/// A language nobody names, or one syntect has no syntax for, leaves the block plain rather than
+/// guessing: unhighlighted code still reads, mis-highlighted code misleads.
+fn highlighted(language: Option<&str>, lines: Vec<Vec<(char, Option<usize>)>>) -> Vec<Vec<Char>> {
+    let plain: Vec<String> = lines.iter().map(|line| line.iter().map(|&(ch, _)| ch).collect()).collect();
+    let tokens = language.and_then(|language| highlight::classify(language, &plain));
+    lines
+        .into_iter()
+        .enumerate()
+        .map(|(index, line)| {
+            let row = tokens.as_ref().and_then(|t| t.get(index));
+            line.into_iter()
+                .enumerate()
+                .map(|(column, (ch, at))| {
+                    (ch, at, row.and_then(|r| r.get(column)).copied().unwrap_or(Token::Plain))
+                })
+                .collect()
+        })
+        .collect()
 }
 
 /// Split verbatim code into lines, dropping the newlines themselves.
 ///
 /// Code text ends with a newline, which would otherwise leave a blank row at the bottom of every
 /// block.
-fn split_lines(chars: &[Char]) -> Vec<Vec<Char>> {
-    let mut lines: Vec<Vec<Char>> = Vec::new();
-    let mut line: Vec<Char> = Vec::new();
+fn split_lines(chars: &[(char, Option<usize>)]) -> Vec<Vec<(char, Option<usize>)>> {
+    let mut lines: Vec<Vec<(char, Option<usize>)>> = Vec::new();
+    let mut line: Vec<(char, Option<usize>)> = Vec::new();
     for &(ch, at) in chars {
         if ch == '\n' {
             lines.push(std::mem::take(&mut line));
@@ -126,7 +155,7 @@ impl CodeBlock {
                     painted.push((CONTINUATION, None, rule));
                     painted.push((' ', None, rule));
                 }
-                painted.extend(part.iter().map(|&(ch, at)| (ch, at, text)));
+                painted.extend(part.iter().map(|&(ch, at, token)| (ch, at, style(token, theme, text))));
                 push(&mut lines, &mut offsets, &painted);
             }
             if parts.is_empty() {
@@ -136,6 +165,24 @@ impl CodeBlock {
         }
         (Text::from(lines), offsets)
     }
+}
+
+/// The palette entry for what a character means. `Plain` is the block's body text, so an
+/// unhighlighted block looks exactly as it did before highlighting existed.
+fn style(token: Token, theme: Theme, plain: Style) -> Style {
+    let color = match token {
+        Token::Plain => return plain,
+        Token::Comment => theme.syntax_comment,
+        Token::Keyword => theme.syntax_keyword,
+        Token::Function => theme.syntax_function,
+        Token::Variable => theme.syntax_variable,
+        Token::Str => theme.syntax_string,
+        Token::Number => theme.syntax_number,
+        Token::Type => theme.syntax_type,
+        Token::Operator => theme.syntax_operator,
+        Token::Punctuation => theme.syntax_punctuation,
+    };
+    Style::from(color)
 }
 
 fn push(lines: &mut Vec<Line<'static>>, offsets: &mut Vec<LineOffsets>, painted: &[Painted]) {
@@ -152,7 +199,7 @@ fn wrap(line: &[Char], first: usize, rest: usize) -> Vec<Vec<Char>> {
     let mut rows: Vec<Vec<Char>> = Vec::new();
     let mut row: Vec<Char> = Vec::new();
     let mut used = 0usize;
-    for &(ch, at) in line {
+    for &(ch, at, token) in line {
         let budget = if rows.is_empty() { first } else { rest };
         let ch_width = display_width(ch);
         if used + ch_width > budget && !row.is_empty() {
@@ -160,7 +207,7 @@ fn wrap(line: &[Char], first: usize, rest: usize) -> Vec<Vec<Char>> {
             used = 0;
         }
         used += ch_width;
-        row.push((ch, at));
+        row.push((ch, at, token));
     }
     if !row.is_empty() {
         rows.push(row);
@@ -267,6 +314,28 @@ mod tests {
         let rows = shown("```\nfirst\n\nthird\n```", 40);
         assert_eq!(rows.len(), 3, "three code rows, the middle one blank: {rows:?}");
         assert!(rows.iter().all(|r| r.starts_with(RULE)), "the block reads as continuous: {rows:?}");
+    }
+
+    #[test]
+    fn a_highlighted_block_paints_tokens_in_their_own_colors() {
+        let theme = Theme::default();
+        let (text, _) = parse("```bash\necho hi # note\n```", 0).expect("a code block").to_text(60, theme);
+        let row = text.lines.get(1).expect("the code row");
+        let colors: Vec<_> = row.spans.iter().filter_map(|s| s.style.fg).collect();
+        assert!(colors.contains(&theme.syntax_comment), "the comment took its own color: {colors:?}");
+        assert!(colors.contains(&theme.syntax_function), "the command took its own color: {colors:?}");
+    }
+
+    #[test]
+    fn an_unknown_language_leaves_the_block_in_body_text() {
+        let theme = Theme::default();
+        let (text, _) = parse("```not-a-language\necho hi\n```", 0).expect("a code block").to_text(60, theme);
+        let row = text.lines.get(1).expect("the code row");
+        let colors: Vec<_> = row.spans.iter().filter_map(|s| s.style.fg).collect();
+        assert!(
+            colors.iter().all(|c| *c == theme.code_block || *c == theme.code_block_border),
+            "nothing was guessed at: {colors:?}"
+        );
     }
 
     #[test]
