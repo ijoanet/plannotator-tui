@@ -715,3 +715,54 @@ fn a_wide_footer_shows_every_hint_item() {
         assert!(footer.contains(item), "{item} missing at 200 columns: {footer:?}");
     }
 }
+
+/// How a binding renders inside the overlay, so a test can look for it on screen.
+fn binding_row(binding: &super::help::Binding) -> String {
+    format!("{:<10}{}", binding.label, binding.what)
+}
+
+/// The shortfall the overlay's own title admits to, read back off the screen.
+fn admitted_shortfall(screen: &str) -> usize {
+    screen
+        .split_once(" more,")
+        .and_then(|(before, _)| before.rsplit(['\u{b7}', ' ']).find(|w| !w.is_empty())?.parse().ok())
+        .unwrap_or(0)
+}
+
+/// Every binding is either on screen or counted in the title, at any pane size.
+///
+/// Bindings are lost two ways: columns past the pane's width are dropped, and rows past its height
+/// are clipped by `Paragraph` silently. Only the first was counted, so a short pane quietly lost
+/// bindings from the "anywhere" group while the overlay still implied it was complete.
+#[test]
+fn the_help_overlay_accounts_for_every_binding_it_cannot_show() {
+    let mut app = app(Box::new(Discard));
+    app.handle_event(&key(KeyCode::Char('?'), KeyModifiers::NONE)).expect("opens the overlay");
+    for (width, height) in
+        [(160u16, 40u16), (160, 16), (160, 12), (160, 10), (160, 8), (160, 6), (160, 5), (90, 40), (60, 40)]
+    {
+        let rows = draw_sized(&mut app, width, height);
+        let screen = rows.join("\n");
+        let shown = super::help::KEYS.iter().filter(|b| screen.contains(&binding_row(b))).count();
+        let admitted = admitted_shortfall(&screen);
+        assert_eq!(
+            shown + admitted,
+            super::help::KEYS.len(),
+            "{width}x{height}: {shown} shown + {admitted} admitted != {} bindings\n{screen}",
+            super::help::KEYS.len()
+        );
+    }
+}
+
+/// A pane too short to hold the table says so, rather than implying it is complete.
+#[test]
+fn a_short_pane_admits_the_overlay_is_cut() {
+    let mut app = app(Box::new(Discard));
+    app.handle_event(&key(KeyCode::Char('?'), KeyModifiers::NONE)).expect("opens the overlay");
+    let short = draw_sized(&mut app, 160, 8).join("\n");
+    assert!(admitted_shortfall(&short) > 0, "a short pane hides bindings silently:\n{short}");
+    assert!(short.contains("lengthen the pane"), "the advice names the short dimension:\n{short}");
+
+    let roomy = draw_sized(&mut app, 160, 40).join("\n");
+    assert_eq!(admitted_shortfall(&roomy), 0, "nothing is hidden with room to spare:\n{roomy}");
+}

@@ -240,25 +240,34 @@ impl App {
             widths.push(width);
             kept += 1;
         }
-        let hidden: usize = columns
-            .iter()
-            .skip(kept)
-            .flatten()
-            .filter(|line| line.width() > 0 && line.spans.len() > 1)
-            .count();
+        // Bindings are lost two ways and both must be owned up to. Columns past the pane's width
+        // are dropped here; rows past its height are clipped by `Paragraph` with nothing on screen
+        // to say so, which is the failure this module exists to prevent.
+        let dropped: usize = columns.iter().skip(kept).flatten().filter(|l| is_binding(l)).count();
         let columns: Vec<Vec<Line<'static>>> = columns.into_iter().take(kept.max(1)).collect();
-        let height = columns.iter().map(Vec::len).max().unwrap_or(1) as u16 + 2;
+        let tallest = columns.iter().map(Vec::len).max().unwrap_or(1);
+        let height = (tallest as u16 + 2).min(area.height);
+        let visible_rows = usize::from(height.saturating_sub(2));
+        let clipped: usize =
+            columns.iter().flat_map(|c| c.iter().skip(visible_rows)).filter(|l| is_binding(l)).count();
+        let hidden = dropped + clipped;
         let width = (spent as u16).min(area.width);
 
         let rect = Rect {
             x: area.x + (area.width.saturating_sub(width)) / 2,
             y: area.y + (area.height.saturating_sub(height)) / 2,
             width,
-            height: height.min(area.height),
+            height,
         };
         frame.render_widget(Clear, rect);
+        // Name the dimension that is short, so the advice is actionable rather than a guess.
+        let advice = match (dropped > 0, clipped > 0) {
+            (true, true) => "resize the pane",
+            (true, false) => "widen the pane",
+            _ => "lengthen the pane",
+        };
         let title = if hidden > 0 {
-            format!(" keys \u{b7} {hidden} more, widen the pane \u{b7} ? or esc closes ")
+            format!(" keys \u{b7} {hidden} more, {advice} \u{b7} ? or esc closes ")
         } else {
             " keys \u{b7} ? or esc closes ".to_owned()
         };
@@ -297,6 +306,11 @@ impl App {
         lines.push(Line::default());
         lines
     }
+}
+
+/// Whether a line is a binding rather than a heading or a spacer.
+fn is_binding(line: &Line<'static>) -> bool {
+    line.width() > 0 && line.spans.len() > 1
 }
 
 /// Pack groups into columns no taller than `room`, keeping each group whole.
