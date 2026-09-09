@@ -10,6 +10,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
+use unicode_width::UnicodeWidthStr;
 
 use super::{App, Focus};
 
@@ -149,13 +150,13 @@ pub(super) const KEYS: [Binding; 24] = [
     Binding { label: "esc", what: "back to document", scope: Scope::Rail, codes: &["Esc"], hint: Some("") },
 ];
 
-/// The footer's right-hand hint for what is focused now.
+/// The footer's hint items for what is focused now, most worth keeping first.
 ///
 /// Built from the same table the overlay reads, so the two cannot disagree about what a key does.
 /// The global keys ride along on the document line, where there is room for them; the selection
-/// and rail lines are complete in themselves. `?` is offered everywhere, because the overlay is
-/// how the rest is found.
-pub(super) fn hint(focus: Focus, pending: bool) -> String {
+/// and rail lines are complete in themselves. `?` leads everywhere, because the overlay is how the
+/// rest is found, and leading means it is the last item dropped when the line is tight.
+fn hint_items(focus: Focus, pending: bool) -> Vec<String> {
     let scope = match (pending, focus) {
         (true, _) => Scope::Selection,
         (false, Focus::Rail) => Scope::Rail,
@@ -174,9 +175,38 @@ pub(super) fn hint(focus: Focus, pending: bool) -> String {
     if scope != Scope::Document
         && let Some(overlay) = KEYS.iter().find(|b| b.label == "?")
     {
-        shown.push(show(overlay));
+        shown.insert(0, show(overlay));
     }
-    format!("{} ", shown.join(" · "))
+    shown
+}
+
+/// Display columns `items` occupy once joined, trailing gap included.
+fn hint_width(items: &[String]) -> usize {
+    if items.is_empty() {
+        return 0;
+    }
+    items.join(" · ").width() + 1
+}
+
+/// The footer's right-hand hint, within `room` columns.
+///
+/// Items shed from the end until it fits, and the whole hint goes if even one will not: the status
+/// shares this line and leads it, so a hint that cannot fit must cost keys rather than cost the
+/// message saying what just happened. Half a key name would be worse than one fewer key.
+pub(super) fn hint(focus: Focus, pending: bool, room: usize) -> String {
+    let mut shown = hint_items(focus, pending);
+    while !shown.is_empty() && hint_width(&shown) > room {
+        shown.pop();
+    }
+    if shown.is_empty() { String::new() } else { format!("{} ", shown.join(" · ")) }
+}
+
+/// Columns to keep for the hint when sizing the status, enough for the `?` item alone.
+///
+/// The overlay is how every other key is found, so the line keeps room for it even when the
+/// document's path would otherwise fill the pane.
+pub(super) fn reserved_hint_width() -> usize {
+    hint_items(Focus::Document, false).first().map_or(0, |first| first.width() + 1)
 }
 
 impl App {
@@ -351,28 +381,44 @@ mod tests {
 
     #[test]
     fn the_footer_hint_changes_with_what_is_focused() {
-        let document = hint(Focus::Document, false);
+        let document = hint(Focus::Document, false, usize::MAX);
         assert!(document.contains("v select"), "{document}");
         assert!(document.contains("? keys"), "the overlay is always reachable: {document}");
         assert!(document.contains("A close"), "the global keys ride the document line: {document}");
         assert!(!document.contains("looks good"), "no verdict keys without a selection: {document}");
 
-        let selection = hint(Focus::Document, true);
+        let selection = hint(Focus::Document, true, usize::MAX);
         assert!(selection.contains("a looks good"), "{selection}");
         assert!(selection.contains("? keys"), "{selection}");
 
-        let rail = hint(Focus::Rail, false);
+        let rail = hint(Focus::Rail, false, usize::MAX);
         assert!(rail.contains("e edit") && rail.contains("x remove"), "{rail}");
         assert!(!rail.contains("v select"), "document keys are not live in the rail: {rail}");
     }
 
-    /// The footer shares its line with the status, which leads it. A hint that grows without
-    /// bound pushes the status off the pane, which is what this width ceiling protects.
+    /// Items shed from the end, and `?` is the last to go, because it is how the rest is found.
+    ///
+    /// The behaviour that matters (the hint never costing the status columns) is asserted through
+    /// the rendered footer in `app::tests`, not here: a width ceiling on this string was the proxy
+    /// that let the status get overwritten for three widths while this test passed.
     #[test]
-    fn no_footer_hint_crowds_out_the_status() {
-        for (focus, pending) in [(Focus::Document, false), (Focus::Document, true), (Focus::Rail, false)] {
-            let width = hint(focus, pending).chars().count();
-            assert!(width <= 60, "{focus:?} pending={pending} hint is {width} columns wide");
+    fn a_hint_sheds_items_to_fit_and_keeps_the_overlay_longest() {
+        let full = hint(Focus::Document, false, usize::MAX);
+        assert!(full.contains("v select") && full.contains("? keys"), "{full}");
+
+        let tight = hint(Focus::Document, false, 20);
+        assert!(tight.width() <= 20, "{tight:?} is wider than the room it was given");
+        assert!(tight.contains("? keys"), "the overlay survives a tight line: {tight:?}");
+        assert!(!tight.contains("v select"), "later items shed first: {tight:?}");
+
+        // Room for nothing is not room for half a key name.
+        assert_eq!(hint(Focus::Document, false, 3), "");
+        assert_eq!(hint(Focus::Document, false, 0), "");
+
+        // Every scope offers the overlay, so no focus can strand the reader.
+        for (focus, pending) in [(Focus::Document, true), (Focus::Rail, false)] {
+            let tight = hint(focus, pending, 12);
+            assert!(tight.contains('?'), "{focus:?} pending={pending}: {tight:?}");
         }
     }
 }

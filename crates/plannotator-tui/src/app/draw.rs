@@ -378,15 +378,14 @@ impl App {
                 None => format!("block {}/{}", self.selected + 1, self.open.doc.blocks.len()),
             },
         ];
-        let help = help::hint(self.focus, self.pending.is_some());
-        let [left_area, right_area] =
-            Layout::horizontal([Constraint::Min(10), Constraint::Length(help.width() as u16)]).areas(area);
-
-        // The path takes whatever the status and counters leave, so a narrow pane elides the
-        // middle of the path instead of truncating the line's tail away.
+        // The status is sized first and the hint takes what is left, because the two share this
+        // line: a hint claiming fixed columns cuts the status mid-word, and the status is the half
+        // that says what just happened. The path keeps room for the `?` item, so the overlay stays
+        // discoverable however long the path is.
         if let Some(path) = self.document_path() {
             let spent: usize = parts.iter().chain(counters.iter()).map(|p| p.width() + 3).sum::<usize>() + 1;
-            let room = usize::from(left_area.width).saturating_sub(spent);
+            let room =
+                usize::from(area.width).saturating_sub(spent).saturating_sub(help::reserved_hint_width());
             let home = std::env::home_dir();
             parts.push(crate::docs::display_path(&path, home.as_deref(), room));
         } else {
@@ -396,14 +395,14 @@ impl App {
         if frame.area().width < RAIL_MIN_TOTAL_WIDTH {
             parts.push("rail hidden: widen to ≥80 cols".into());
         }
-        frame.render_widget(
-            Paragraph::new(Line::from(Span::raw(format!(" {}", parts.join(" · "))).dim())),
-            left_area,
-        );
-        frame.render_widget(
-            Paragraph::new(Line::from(Span::raw(help.clone()).dim()).right_aligned()),
-            right_area,
-        );
+        let status = format!(" {}", parts.join(" · "));
+        // One column of gap, so the hint can never sit flush against the status.
+        let room = usize::from(area.width).saturating_sub(status.width()).saturating_sub(1);
+        let help = help::hint(self.focus, self.pending.is_some(), room);
+        let [left_area, right_area] =
+            Layout::horizontal([Constraint::Min(0), Constraint::Length(help.width() as u16)]).areas(area);
+        frame.render_widget(Paragraph::new(Line::from(Span::raw(status).dim())), left_area);
+        frame.render_widget(Paragraph::new(Line::from(Span::raw(help).dim()).right_aligned()), right_area);
     }
 }
 

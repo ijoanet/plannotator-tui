@@ -678,3 +678,40 @@ fn a_pane_with_room_shows_every_group_and_a_cramped_one_says_what_it_hid() {
     let cramped = draw_sized(&mut app, 80, 20).join("\n");
     assert!(cramped.contains("widen the pane"), "the shortfall is reported: {cramped}");
 }
+
+/// The status and the hint share the footer, and the hint must never cost the status columns.
+///
+/// Asserted through the rendered buffer at every width, because the old guard was a ceiling on the
+/// hint string (`<= 60 columns`), which passed while the hint overwrote the status at 52, 64 and 80:
+/// the layout gave the hint fixed columns and left the status whatever remained.
+#[test]
+fn the_footer_hint_never_takes_columns_from_the_status() {
+    let mut app = app(Box::new(Discard));
+    for width in 20..=200u16 {
+        let rows = draw_sized(&mut app, width, 12);
+        let footer = rows.last().expect("a footer row").trim_end().to_owned();
+        let Some(at) = footer.find('?') else { continue };
+        // Whenever the hint is on screen, the status before it is whole and separated by a gap.
+        let before = footer.get(..at).expect("the status precedes the hint");
+        assert!(before.ends_with(' '), "width {width}: the hint abuts the status: {footer:?}");
+        assert!(
+            before.contains("0 annotations"),
+            "width {width}: the hint cost the status its counters: {footer:?}"
+        );
+        assert!(
+            before.contains("block 1/"),
+            "width {width}: the hint cut the status mid-counter: {footer:?}"
+        );
+    }
+}
+
+/// A wide pane shows the whole hint; the shedding must not be one-way.
+#[test]
+fn a_wide_footer_shows_every_hint_item() {
+    let mut app = app(Box::new(Discard));
+    let rows = draw_sized(&mut app, 200, 12);
+    let footer = rows.last().expect("a footer row").clone();
+    for item in ["? keys", "E send", "A close", "q quit", "v select"] {
+        assert!(footer.contains(item), "{item} missing at 200 columns: {footer:?}");
+    }
+}
