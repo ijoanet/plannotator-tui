@@ -57,6 +57,9 @@ hit-testing takes a column. Producing one where the other is expected mis-anchor
 after a wide one, cumulatively, and the test that hid it asserted a length. Assert the behaviour: the
 byte under a column belongs to the character drawn at that column. Decision 20.
 
+`docs/architecture.md` is the map: what the app is, how a document becomes a frame, and which module
+owns what. This file is the rules; that one is the shape.
+
 ## Rules that are enforced (see `Cargo.toml` workspace lints)
 
 - `unsafe` is forbidden. `unwrap`/`expect`/`panic!`/`todo!` warn — production code returns

@@ -284,7 +284,7 @@ plannotator-tui --bench <file>                                  # parse / layout
 - `crates/plannotator-tui`: the app. `crates/plannotator-tui-schema`: annotation and anchor
   types, wire-compatible with Plannotator Workspaces. `crates/plannotator-tui-hosts`: agent
   transcript readers.
-- `docs/decisions.md` is the design record; `AGENTS.md` the engineering rules;
+- `docs/architecture.md` is the map of the app; `docs/decisions.md` the design record; `AGENTS.md` the engineering rules;
   `crates/plannotator-tui/README.md` the full key reference and measurements.
 
 MIT.
